@@ -14,6 +14,7 @@ import {
 } from '../persist/save';
 import { IsoCamera } from '../render/camera';
 import { IsoRenderer } from '../render/IsoRenderer';
+import { pickTileAtScreen } from '../render/picking';
 import { createBudget } from '../sim/budget';
 import { SCENARIOS, startScenario } from '../sim/scenarios';
 import { Simulation, type GameSpeed } from '../sim/Simulation';
@@ -334,6 +335,7 @@ export class GameApp {
     this.cityName = 'New City';
     this.sim = new Simulation(map, budget, 1900);
     this.sim.pushNews('Welcome, Mayor. Zone land, bring power, and connect the roads.');
+    this.cameraReady = false;
     this.enterGame();
   }
 
@@ -344,6 +346,7 @@ export class GameApp {
     this.sim = new Simulation(started.map, started.budget, started.year);
     this.sim.scenario = started.runtime;
     this.sim.pushNews(`Scenario: ${started.runtime.def?.title}. ${started.runtime.def?.goal}`);
+    this.cameraReady = false;
     this.enterGame();
   }
 
@@ -357,6 +360,7 @@ export class GameApp {
     this.sim.newspaper = h.newspaper;
     this.sim.scenario = h.scenario;
     this.sim.stepMonth();
+    this.cameraReady = false;
     this.enterGame();
     this.toast('City loaded');
   }
@@ -368,19 +372,14 @@ export class GameApp {
     this.overlay = 'none';
     this.view = 'surface';
     this.layerBadge.classList.remove('show');
-    this.resize();
-    if (this.sim) {
-      this.camera.zoom = 0.85;
-      this.camera.centerOn(
-        this.sim.map.size / 2,
-        this.sim.map.size / 2,
-        this.canvas.clientWidth,
-        this.canvas.clientHeight,
-      );
-    }
+    // Layout may not be ready the same frame display flips on iOS — resize twice
+    this.layoutAndCenter();
+    requestAnimationFrame(() => this.layoutAndCenter());
+    window.setTimeout(() => this.layoutAndCenter(), 100);
+
     this.pointer?.dispose();
     this.pointer = new PointerController(this.canvas, this.camera, {
-      shouldPaintDrag: () => getTool(this.tool).drag && this.tool !== 'pan',
+      shouldPaintDrag: () => this.tool !== 'pan' && this.tool !== 'query',
       onPan: (dx, dy) => this.camera.pan(dx, dy),
       onTap: (x, y) => this.handleTap(x, y),
       onDragStart: (x, y) => this.handleDragStart(x, y),
@@ -394,9 +393,29 @@ export class GameApp {
     this.startLoop();
   }
 
+  private layoutAndCenter(): void {
+    this.resize();
+    if (!this.sim) return;
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    if (w < 32 || h < 32) return;
+    // Only hard-center when camera has never been placed (or after fresh enter)
+    if (!this.cameraReady) {
+      this.camera.zoom = 0.9;
+      this.camera.x = 0;
+      this.camera.y = 0;
+      this.camera.centerOn(this.sim.map.size / 2, this.sim.map.size / 2, w, h, 2);
+      this.cameraReady = true;
+    }
+  }
+
+  private cameraReady = false;
+
   private resize(): void {
     const wrap = this.canvas.parentElement!;
-    this.renderer.resize(wrap.clientWidth, wrap.clientHeight);
+    const w = wrap.clientWidth || window.innerWidth;
+    const h = wrap.clientHeight || Math.max(200, window.innerHeight - 160);
+    this.renderer.resize(w, h);
   }
 
   private startLoop(): void {
@@ -444,25 +463,16 @@ export class GameApp {
 
   private screenToTile(sx: number, sy: number): { x: number; y: number } | null {
     if (!this.sim) return null;
-    const { wx, wy } = this.camera.screenToWorld(sx, sy);
-    // Approximate height correction by probing
-    let x = Math.floor(wx);
-    let y = Math.floor(wy);
-    for (let i = 0; i < 3; i++) {
-      const t = this.sim.map.get(x, y);
-      if (!t) break;
-      const adj = this.camera.screenToWorld(sx, sy + t.height * this.camera.heightStep * this.camera.zoom);
-      x = Math.floor(adj.wx);
-      y = Math.floor(adj.wy);
-    }
-    if (!this.sim.map.inBounds(x, y)) return null;
-    return { x, y };
+    return pickTileAtScreen(this.sim.map, this.camera, sx, sy);
   }
 
   private handleTap(sx: number, sy: number): void {
     const tile = this.screenToTile(sx, sy);
     this.hover = tile;
-    if (!tile) return;
+    if (!tile) {
+      this.toast('Tap the terrain');
+      return;
+    }
     if (this.tool === 'pan') return;
     if (this.tool === 'query') {
       this.showQueryAtTile(tile.x, tile.y, sx, sy);
@@ -474,15 +484,16 @@ export class GameApp {
 
   private handleDragStart(sx: number, sy: number): void {
     const tile = this.screenToTile(sx, sy);
+    this.hover = tile;
+    this.painted.clear();
     if (!tile) return;
     this.dragOrigin = tile;
     this.dragCurrent = tile;
-    this.painted.clear();
-    if (!getTool(this.tool).drag) return;
-    // Zone tools wait for drag end; paint tools apply continuously
+    // Zone tools wait for drag end; everything else paints on contact
     if (!zoneForTool(this.tool)) {
       this.applyTool(tile.x, tile.y);
       this.painted.add(`${tile.x},${tile.y}`);
+      this.updateHud();
     }
   }
 
@@ -492,17 +503,26 @@ export class GameApp {
     if (!tile || !this.dragOrigin) return;
     this.dragCurrent = tile;
     if (zoneForTool(this.tool)) return;
+    // Single-tile buildings: don't smear while dragging
+    if (!getTool(this.tool).drag) return;
     const key = `${tile.x},${tile.y}`;
     if (this.painted.has(key)) return;
     this.applyTool(tile.x, tile.y);
     this.painted.add(key);
+    this.updateHud();
   }
 
   private handleDragEnd(sx: number, sy: number): void {
     const tile = this.screenToTile(sx, sy);
-    if (tile) this.dragCurrent = tile;
+    if (tile) {
+      this.dragCurrent = tile;
+      this.hover = tile;
+    }
     if (this.dragOrigin && this.dragCurrent && zoneForTool(this.tool)) {
       this.applyZoneRect(this.dragOrigin.x, this.dragOrigin.y, this.dragCurrent.x, this.dragCurrent.y);
+    } else if (this.dragOrigin && this.painted.size === 0 && tile && !zoneForTool(this.tool)) {
+      // Recover missed contact placement
+      this.applyTool(tile.x, tile.y);
     }
     this.dragOrigin = null;
     this.dragCurrent = null;
