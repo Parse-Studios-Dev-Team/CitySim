@@ -54,11 +54,8 @@ export class PointerController {
     this.el.removeEventListener('touchcancel', this.onTouchEnd);
   }
 
-  /** Prefer offset coords when the event target is the canvas. */
+  /** Always use client coordinates — Safari canvas offsetX can be wrong on retina. */
   private localFromEvent(e: PointerEvent | MouseEvent): { x: number; y: number } {
-    if (e.target === this.el && 'offsetX' in e && Number.isFinite(e.offsetX)) {
-      return { x: e.offsetX, y: e.offsetY };
-    }
     return this.local(e.clientX, e.clientY);
   }
 

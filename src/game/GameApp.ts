@@ -142,6 +142,7 @@ export class GameApp {
     this.gameEl.querySelector('#btn-menu')!.addEventListener('click', () => {
       this.persist();
       this.stopLoop();
+      this.teardownInput();
       this.gameEl.classList.remove('active');
       this.menuEl.classList.remove('hidden');
       const loadBtn = this.menuEl.querySelector('#btn-load') as HTMLButtonElement;
@@ -377,7 +378,7 @@ export class GameApp {
     requestAnimationFrame(() => this.layoutAndCenter());
     window.setTimeout(() => this.layoutAndCenter(), 100);
 
-    this.pointer?.dispose();
+    this.teardownInput();
     this.pointer = new PointerController(this.canvas, this.camera, {
       shouldPaintDrag: () => this.tool !== 'pan' && this.tool !== 'query',
       onPan: (dx, dy) => this.camera.pan(dx, dy),
@@ -419,7 +420,10 @@ export class GameApp {
   }
 
   private startLoop(): void {
-    this.stopLoop();
+    // Stop the animation frame only — do NOT dispose map pointer input here.
+    // (Previously stopLoop() cleared the PointerController, so map taps did nothing.)
+    this.running = false;
+    cancelAnimationFrame(this.raf);
     this.running = true;
     this.lastTs = performance.now();
     const loop = (ts: number) => {
@@ -443,6 +447,9 @@ export class GameApp {
   private stopLoop(): void {
     this.running = false;
     cancelAnimationFrame(this.raf);
+  }
+
+  private teardownInput(): void {
     this.pointer?.dispose();
     this.pointer = null;
   }
