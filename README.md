@@ -4,14 +4,23 @@ Mobile-first isometric city builder inspired by classic SimCity 2000 (SNES-era m
 
 **Original art and systems** — no Maxis/EA assets.
 
-## Run locally
+## Play (one tap)
+
+Open this link on your phone — no install, no terminal:
+
+**[▶ Play CitySim](https://java-lib-exercises-framework.trycloudflare.com)**
+
+Tap **New City** and start zoning. (Safari → Share → Add to Home Screen for fullscreen.)
+
+> That link is a live demo tunnel from the cloud agent. For a permanent site: GitHub → Settings → Pages → Source **Deploy from a branch** → `gh-pages` / `/` → Save. Then use:
+> `https://parse-studios-dev-team.github.io/CitySim/`
+
+## Run locally (optional, developers)
 
 ```bash
 npm install
 npm run dev
 ```
-
-Open the printed URL on your phone (same Wi‑Fi) or use desktop Chrome device mode.
 
 ```bash
 npm run build
