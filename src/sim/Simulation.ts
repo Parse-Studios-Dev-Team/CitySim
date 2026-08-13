@@ -9,6 +9,7 @@ import {
   type DisasterState,
 } from './disasters';
 import { growZones, updateRoadAccess } from './growth';
+import { computeHappiness } from './mood';
 import { updatePower } from './power';
 import {
   checkScenario,
@@ -33,6 +34,9 @@ export interface SimStats {
   powerUsed: number;
   waterCapacity: number;
   waterUsed: number;
+  happiness: number;
+  brownout: boolean;
+  drought: boolean;
 }
 
 export class Simulation {
@@ -58,6 +62,9 @@ export class Simulation {
     powerUsed: 0,
     waterCapacity: 0,
     waterUsed: 0,
+    happiness: 55,
+    brownout: false,
+    drought: false,
   };
 
   private acc = 0;
@@ -110,7 +117,18 @@ export class Simulation {
       powerUsed: power.supplied,
       waterCapacity: water.capacity,
       waterUsed: water.used,
+      happiness: 50,
+      brownout: power.brownout,
+      drought: water.drought,
     };
+    this.stats.happiness = computeHappiness(this.map, this.coverage, this.budget, this.stats);
+
+    if (power.brownout && Math.random() < 0.45) {
+      this.pushNews('Blackouts sweep the grid — build more generating capacity.');
+    }
+    if (water.drought && Math.random() < 0.4) {
+      this.pushNews('Taps run dry in the outer districts.');
+    }
 
     this.disasters = tickDisasters(
       this.map,
@@ -140,7 +158,7 @@ export class Simulation {
       this.month = 1;
       this.year++;
       this.pushNews(
-        `Year ${this.year} begins. Treasury: $${this.budget.funds.toLocaleString()}.`,
+        `Year ${this.year} begins. Treasury: $${this.budget.funds.toLocaleString()}. Approval: ${this.stats.happiness}%.`,
       );
     }
   }

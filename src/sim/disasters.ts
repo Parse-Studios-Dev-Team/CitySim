@@ -3,14 +3,23 @@ import type { CoverageMaps } from './coverage';
 
 export type DisasterType = 'none' | 'fire' | 'flood' | 'monster';
 
+export interface MonsterState {
+  px: number;
+  py: number;
+  tx: number;
+  ty: number;
+  stepsLeft: number;
+}
+
 export interface DisasterState {
   enabled: boolean;
   active: DisasterType;
   message: string | null;
+  monster: MonsterState | null;
 }
 
 export function createDisasterState(): DisasterState {
-  return { enabled: true, active: 'none', message: null };
+  return { enabled: true, active: 'none', message: null, monster: null };
 }
 
 export function tickDisasters(
@@ -21,8 +30,8 @@ export function tickDisasters(
 ): DisasterState {
   let message: string | null = null;
   let active: DisasterType = state.active;
+  let monster = state.monster;
 
-  // Spread / extinguish fires
   const fires: Array<{ x: number; y: number }> = [];
   map.forEach((t, x, y) => {
     if (t.onFire) fires.push({ x, y });
@@ -52,20 +61,17 @@ export function tickDisasters(
     }
   }
 
-  // Clear floods gradually
   map.forEach((t) => {
     if (t.flooded && Math.random() < 0.25) t.flooded = false;
   });
 
   if (!state.enabled) {
-    return { ...state, active: fires.length ? 'fire' : 'none', message: null };
+    return { ...state, active: fires.length ? 'fire' : monster ? 'monster' : 'none', message: null };
   }
 
-  // Random events
   const roll = Math.random();
-  if (active === 'none' && population > 50) {
+  if (active === 'none' && !monster && population > 50) {
     if (roll < 0.02) {
-      // Start a fire on a random building
       const buildings: Array<{ x: number; y: number }> = [];
       map.forEach((t, x, y) => {
         if (t.building !== 'none' && !t.water) buildings.push({ x, y });
@@ -77,7 +83,6 @@ export function tickDisasters(
         message = 'Fire breaks out in the city!';
       }
     } else if (roll < 0.03) {
-      // Flood near water
       map.forEach((t, x, y) => {
         if (t.water) {
           for (const nb of map.neighbors4(x, y)) {
@@ -93,28 +98,61 @@ export function tickDisasters(
       active = 'flood';
       message = 'Heavy rains flood the waterfront!';
     } else if (roll < 0.035 && population > 200) {
-      // Monster stomps a path
-      let x = (Math.random() * map.size) | 0;
-      let y = (Math.random() * map.size) | 0;
-      for (let step = 0; step < 12; step++) {
-        const t = map.get(x, y);
-        if (t && !t.water) {
-          if (t.building !== 'none') {
-            t.building = 'abandoned';
-            t.buildingStage = 1;
-            t.population = 0;
-          }
-          t.trees = false;
-        }
-        x = Math.max(0, Math.min(map.size - 1, x + ((Math.random() * 3) | 0) - 1));
-        y = Math.max(0, Math.min(map.size - 1, y + ((Math.random() * 3) | 0) - 1));
-      }
+      const x = (Math.random() * map.size) | 0;
+      const y = (Math.random() * map.size) | 0;
+      monster = { px: x, py: y, tx: x, ty: y, stepsLeft: 16 };
       active = 'monster';
       message = 'A monster is trampling through town!';
     }
-  } else if (active !== 'none' && fires.length === 0 && roll < 0.4) {
+  } else if (active === 'flood' && roll < 0.4) {
+    active = 'none';
+  } else if (active === 'fire' && fires.length === 0) {
+    active = 'none';
+  } else if (active === 'monster' && !monster) {
     active = 'none';
   }
 
-  return { enabled: state.enabled, active, message };
+  return { enabled: state.enabled, active, message, monster };
+}
+
+export function advanceMonster(map: TileMap, state: DisasterState, dtMs: number): void {
+  const m = state.monster;
+  if (!m) return;
+  const speed = 0.0024;
+  const dx = m.tx - m.px;
+  const dy = m.ty - m.py;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 0.08) {
+    stomp(map, Math.round(m.px), Math.round(m.py));
+    m.stepsLeft--;
+    if (m.stepsLeft <= 0) {
+      state.monster = null;
+      if (state.active === 'monster') state.active = 'none';
+      return;
+    }
+    const dirs = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ];
+    const d = dirs[(Math.random() * 4) | 0];
+    m.tx = Math.max(0, Math.min(map.size - 1, Math.round(m.px) + d[0]));
+    m.ty = Math.max(0, Math.min(map.size - 1, Math.round(m.py) + d[1]));
+  } else {
+    m.px += (dx / dist) * speed * dtMs;
+    m.py += (dy / dist) * speed * dtMs;
+  }
+}
+
+function stomp(map: TileMap, x: number, y: number): void {
+  const t = map.get(x, y);
+  if (!t || t.water) return;
+  if (t.building !== 'none') {
+    t.building = 'abandoned';
+    t.buildingStage = 1;
+    t.population = 0;
+    t.footprint = false;
+  }
+  t.trees = false;
 }

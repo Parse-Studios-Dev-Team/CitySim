@@ -15,16 +15,23 @@ import {
 import { IsoCamera } from '../render/camera';
 import { IsoRenderer } from '../render/IsoRenderer';
 import { pickTileAtScreen } from '../render/picking';
+import { clockLabel } from '../render/sky';
+import { Sfx } from '../audio/sfx';
 import { createBudget } from '../sim/budget';
+import { advise } from '../sim/advisor';
+import { moodFace } from '../sim/mood';
 import { SCENARIOS, startScenario } from '../sim/scenarios';
+import { advanceMonster } from '../sim/disasters';
 import { Simulation, type GameSpeed } from '../sim/Simulation';
 import {
   TOOLS,
+  TOOL_CATEGORIES,
   buildingFootprint,
   buildingForTool,
   getTool,
   roadForTool,
   zoneForTool,
+  type ToolDef,
   type ToolId,
 } from './tools';
 
@@ -43,8 +50,22 @@ export class GameApp {
     demandR: HTMLElement;
     demandC: HTMLElement;
     demandI: HTMLElement;
+    mood: HTMLElement;
+    clock: HTMLElement;
   };
   private dockEl: HTMLElement;
+  private dockCatsEl: HTMLElement;
+  private advisorEl: HTMLElement;
+  private advisorText: HTMLElement;
+  private tickerEl: HTMLElement;
+  private minimap: HTMLCanvasElement;
+  private sfx = new Sfx();
+  private toolGroup: ToolDef['group'] = 'transit';
+  private timeOfDay = 0.38;
+  private visualTime = 0;
+  private lastAdvice = '';
+  private lastDisaster: string | null = null;
+  private keysBound = false;
   private sheets: Record<string, HTMLElement>;
 
   private camera = new IsoCamera();
@@ -72,6 +93,11 @@ export class GameApp {
     this.queryEl = root.querySelector('#query-chip')!;
     this.layerBadge = root.querySelector('#layer-badge')!;
     this.dockEl = root.querySelector('#dock-scroll')!;
+    this.dockCatsEl = root.querySelector('#dock-cats')!;
+    this.advisorEl = root.querySelector('#advisor')!;
+    this.advisorText = root.querySelector('#advisor-text')!;
+    this.tickerEl = root.querySelector('#ticker')!;
+    this.minimap = root.querySelector('#minimap')!;
     this.hudEls = {
       funds: root.querySelector('#hud-funds')!,
       date: root.querySelector('#hud-date')!,
@@ -80,6 +106,8 @@ export class GameApp {
       demandR: root.querySelector('#demand-r')!,
       demandC: root.querySelector('#demand-c')!,
       demandI: root.querySelector('#demand-i')!,
+      mood: root.querySelector('#hud-mood')!,
+      clock: root.querySelector('#hud-clock')!,
     };
     this.sheets = {
       budget: root.querySelector('#sheet-budget')!,
@@ -93,9 +121,11 @@ export class GameApp {
     this.renderer = new IsoRenderer(this.canvas, ctx);
 
     this.bindMenu();
+    this.buildDockCats();
     this.buildDock();
     this.bindHud();
     this.bindSheets();
+    this.bindKeys();
     this.renderScenarioList();
 
     const loadBtn = root.querySelector('#btn-load') as HTMLButtonElement;
@@ -106,7 +136,9 @@ export class GameApp {
 
   private bindMenu(): void {
     this.menuEl.querySelector('#btn-new')!.addEventListener('click', () => {
-      this.startNewCity();
+      const input = this.menuEl.querySelector('#city-name') as HTMLInputElement;
+      const name = input.value.trim();
+      this.startNewCity(name || 'New City');
     });
     this.menuEl.querySelector('#btn-load')!.addEventListener('click', () => {
       const data = loadCity();
@@ -147,6 +179,10 @@ export class GameApp {
       this.menuEl.classList.remove('hidden');
       const loadBtn = this.menuEl.querySelector('#btn-load') as HTMLButtonElement;
       loadBtn.disabled = !hasSave();
+    });
+    this.gameEl.querySelector('#btn-sound')!.addEventListener('click', () => {
+      const on = this.sfx.toggle();
+      (this.gameEl.querySelector('#btn-sound') as HTMLElement).textContent = on ? '🔊' : '🔇';
     });
     this.gameEl.querySelector('#btn-view')!.addEventListener('click', () => {
       this.view = this.view === 'surface' ? 'underground' : 'surface';
@@ -233,6 +269,16 @@ export class GameApp {
       });
     });
 
+    this.minimap.addEventListener('click', (e) => {
+      if (!this.sim) return;
+      const rect = this.minimap.getBoundingClientRect();
+      const x = Math.floor(((e.clientX - rect.left) / rect.width) * this.sim.map.size);
+      const y = Math.floor(((e.clientY - rect.top) / rect.height) * this.sim.map.size);
+      const w = this.canvas.clientWidth;
+      const h = this.canvas.clientHeight;
+      this.camera.centerOn(x, y, w, h, this.sim.map.get(x, y)?.height ?? 2);
+    });
+
     this.sheets.news.querySelector('#btn-export')!.addEventListener('click', () => {
       const data = this.toSaveData();
       if (!data) return;
@@ -280,20 +326,130 @@ export class GameApp {
     }
   }
 
+  private bindKeys(): void {
+    if (this.keysBound) return;
+    this.keysBound = true;
+    window.addEventListener('keydown', (e) => {
+      if (!this.gameEl.classList.contains('active') || !this.sim) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          this.sim.speed = this.sim.speed === 0 ? 1 : 0;
+          this.syncSpeedButtons();
+          break;
+        case '1':
+          this.sim.speed = 1;
+          this.syncSpeedButtons();
+          break;
+        case '2':
+          this.sim.speed = 2;
+          this.syncSpeedButtons();
+          break;
+        case '3':
+          this.sim.speed = 3;
+          this.syncSpeedButtons();
+          break;
+        case 'r':
+        case 'R':
+          this.setToolGroup('transit');
+          this.setTool('road');
+          break;
+        case 'b':
+        case 'B':
+          this.setToolGroup('nav');
+          this.setTool('bulldoze');
+          break;
+        case 'q':
+        case 'Q':
+          this.setToolGroup('nav');
+          this.setTool('query');
+          break;
+        case 'Escape':
+          Object.entries(this.sheets).forEach(([name, el]) => {
+            if (el.classList.contains('open')) this.closeSheet(name);
+          });
+          break;
+        case 'ArrowLeft':
+        case 'a':
+          this.camera.pan(28, 0);
+          break;
+        case 'ArrowRight':
+        case 'd':
+          this.camera.pan(-28, 0);
+          break;
+        case 'ArrowUp':
+        case 'w':
+          this.camera.pan(0, 28);
+          break;
+        case 'ArrowDown':
+        case 's':
+          this.camera.pan(0, -28);
+          break;
+        default:
+          break;
+      }
+    });
+  }
+
+  private syncSpeedButtons(): void {
+    if (!this.sim) return;
+    const speed = this.sim.speed;
+    this.gameEl.querySelectorAll('[data-speed]').forEach((b) => {
+      b.classList.toggle('active', Number((b as HTMLElement).dataset.speed) === speed);
+    });
+  }
+
+  private buildDockCats(): void {
+    this.dockCatsEl.innerHTML = '';
+    for (const cat of TOOL_CATEGORIES) {
+      const btn = document.createElement('button');
+      btn.className = 'cat-btn';
+      btn.dataset.group = cat.id;
+      btn.innerHTML = `<span>${cat.glyph}</span>${cat.label}`;
+      btn.addEventListener('click', () => {
+        this.sfx.play('click');
+        this.setToolGroup(cat.id);
+      });
+      this.dockCatsEl.appendChild(btn);
+    }
+    this.setToolGroup('transit');
+  }
+
+  private setToolGroup(id: ToolDef['group']): void {
+    this.toolGroup = id;
+    this.dockCatsEl.querySelectorAll('.cat-btn').forEach((b) => {
+      b.classList.toggle('active', (b as HTMLElement).dataset.group === id);
+    });
+    this.buildDock();
+  }
+
   private buildDock(): void {
     this.dockEl.innerHTML = '';
     for (const tool of TOOLS) {
       if (tool.group === 'reward') continue;
+      if (tool.group !== this.toolGroup) continue;
       const btn = document.createElement('button');
       btn.className = 'tool-btn';
       btn.dataset.tool = tool.id;
       btn.innerHTML = `<span class="glyph">${tool.glyph}</span><span>${tool.label}</span>${
         tool.cost ? `<span class="cost">$${tool.cost}</span>` : ''
       }`;
-      btn.addEventListener('click', () => this.setTool(tool.id));
+      btn.addEventListener('click', () => {
+        this.sfx.play('click');
+        this.setTool(tool.id);
+      });
       this.dockEl.appendChild(btn);
     }
-    this.setTool('road');
+    const current = TOOLS.find((t) => t.id === this.tool && t.group === this.toolGroup);
+    if (!current) {
+      const first = TOOLS.find((t) => t.group === this.toolGroup);
+      if (first) this.setTool(first.id);
+    } else {
+      this.setTool(this.tool);
+    }
+    this.refreshRewardTools();
   }
 
   private refreshRewardTools(): void {
@@ -330,12 +486,13 @@ export class GameApp {
     this.hudEls.tool.textContent = t.cost ? `${t.label} ($${t.cost})` : t.label;
   }
 
-  private startNewCity(): void {
+  private startNewCity(name = 'New City'): void {
     const map = new TileMap();
     const budget = createBudget(STARTING_FUNDS);
-    this.cityName = 'New City';
+    this.cityName = name;
     this.sim = new Simulation(map, budget, 1900);
-    this.sim.pushNews('Welcome, Mayor. Zone land, bring power, and connect the roads.');
+    this.sim.pushNews(`Welcome to ${name}, Mayor. Power, roads, then zones — the city will grow.`);
+    this.timeOfDay = 0.38;
     this.cameraReady = false;
     this.enterGame();
   }
@@ -347,6 +504,7 @@ export class GameApp {
     this.sim = new Simulation(started.map, started.budget, started.year);
     this.sim.scenario = started.runtime;
     this.sim.pushNews(`Scenario: ${started.runtime.def?.title}. ${started.runtime.def?.goal}`);
+    this.timeOfDay = 0.38;
     this.cameraReady = false;
     this.enterGame();
   }
@@ -387,7 +545,11 @@ export class GameApp {
       onDragMove: (x, y) => this.handleDragMove(x, y),
       onDragEnd: (x, y) => this.handleDragEnd(x, y),
       onLongPress: (x, y) => this.showQuery(x, y),
+      onHover: (x, y) => {
+        this.hover = this.screenToTile(x, y);
+      },
     });
+    this.sfx.resume();
     this.syncBudgetForm();
     this.refreshRewardTools();
     this.updateHud();
@@ -430,15 +592,37 @@ export class GameApp {
       if (!this.running || !this.sim) return;
       const dt = ts - this.lastTs;
       this.lastTs = ts;
+      this.visualTime += dt;
+      const scale =
+        this.sim.speed === 0
+          ? 0.000004
+          : this.sim.speed === 1
+            ? 0.000025
+            : this.sim.speed === 2
+              ? 0.00005
+              : 0.00009;
+      this.timeOfDay = (this.timeOfDay + dt * scale) % 1;
+      this.hudEls.clock.textContent = clockLabel(this.timeOfDay);
+      advanceMonster(this.sim.map, this.sim.disasters, dt);
       const stepped = this.sim.tick(dt);
       if (stepped) {
         this.updateHud();
         this.refreshRewardTools();
-        if (this.sim.scenario.won || this.sim.scenario.lost) {
+        this.refreshAdvisor();
+        const d = this.sim.disasters.active;
+        if (d !== 'none' && d !== this.lastDisaster) {
+          if (d === 'fire') this.sfx.play('fire');
+          else if (d === 'monster') this.sfx.play('monster');
+        }
+        this.lastDisaster = d;
+        if (this.sim.scenario.won) {
+          this.sfx.play('win');
+          this.openSheet('news');
+        } else if (this.sim.scenario.lost) {
           this.openSheet('news');
         }
       }
-      this.draw();
+      this.draw(dt);
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -454,7 +638,7 @@ export class GameApp {
     this.pointer = null;
   }
 
-  private draw(): void {
+  private draw(dt = 16): void {
     if (!this.sim) return;
     const drag =
       this.dragOrigin && this.dragCurrent
@@ -465,7 +649,26 @@ export class GameApp {
             y1: this.dragCurrent.y,
           }
         : null;
-    this.renderer.render(this.sim.map, this.camera, this.overlay, this.view, this.hover, drag);
+    const building = buildingForTool(this.tool);
+    let ghost: { x: number; y: number; w: number; h: number; ok: boolean } | null = null;
+    if (building && this.hover) {
+      const fp = buildingFootprint(building);
+      ghost = {
+        x: this.hover.x,
+        y: this.hover.y,
+        w: fp.w,
+        h: fp.h,
+        ok: this.sim.map.canPlaceBuilding(this.hover.x, this.hover.y, fp.w, fp.h),
+      };
+    }
+    const m = this.sim.disasters.monster;
+    this.renderer.render(this.sim.map, this.camera, this.overlay, this.view, this.hover, drag, {
+      time: this.visualTime,
+      dt,
+      timeOfDay: this.timeOfDay,
+      ghost,
+      monster: m ? { px: m.px, py: m.py } : null,
+    });
   }
 
   private screenToTile(sx: number, sy: number): { x: number; y: number } | null {
@@ -547,12 +750,17 @@ export class GameApp {
     if (!this.sim) return;
     const t = this.sim.map.get(x, y)!;
     const b = BUILDINGS[t.building];
+    const issues: string[] = [];
+    if (t.zone !== 'none' && !t.powered) issues.push('no power');
+    if (t.zone !== 'none' && !t.roadAccess) issues.push('no road');
+    if (t.buildingStage >= 2 && !t.watered) issues.push('needs water');
+    if (t.onFire) issues.push('ON FIRE');
+    const issueLine = issues.length ? `<br/><em>${issues.join(' · ')}</em>` : '';
     this.queryEl.innerHTML = `
-      <strong>${x},${y}</strong><br/>
-      ${t.water ? 'Water' : `Height ${t.height}`}${t.trees ? ' · Trees' : ''}<br/>
-      Zone: ${t.zone}<br/>
-      ${t.building !== 'none' ? `${b.label} (stage ${t.buildingStage})<br/>` : ''}
-      Power ${t.powered ? 'ON' : 'off'} · Water ${t.watered ? 'ON' : 'off'} · Road ${t.roadAccess ? 'yes' : 'no'}<br/>
+      <strong>${x},${y}</strong> · ${t.water ? 'Water' : `Ht ${t.height}`}${t.trees ? ' · Trees' : ''}<br/>
+      Zone: ${t.zone}${t.building !== 'none' ? ` · ${b.label} s${t.buildingStage}` : ''}<br/>
+      ${t.powered ? '⚡' : '⚡✗'} ${t.watered ? '💧' : '💧✗'} ${t.roadAccess ? '🛣️' : '🛣️✗'}
+      ${issueLine}<br/>
       Land ${t.landValue | 0} · Pol ${t.pollution | 0} · Crime ${t.crime | 0}
     `;
     this.queryEl.style.left = `${Math.min(sx + 12, this.canvas.clientWidth - 180)}px`;
@@ -566,6 +774,7 @@ export class GameApp {
     if (amount <= 0) return true;
     if (this.sim.budget.funds < amount) {
       this.toast('Not enough funds');
+      this.sfx.play('error');
       return false;
     }
     this.sim.budget.funds -= amount;
@@ -594,6 +803,8 @@ export class GameApp {
     if (n === 0) {
       this.sim.budget.funds += estimate * costEach;
       this.toast("Can't zone there");
+    } else {
+      this.sfx.play('zone');
     }
   }
 
@@ -607,6 +818,8 @@ export class GameApp {
 
     if (tool === 'bulldoze') {
       if (!this.spend(BULLDOZE_COST)) return;
+      this.sfx.play('bulldoze');
+      this.renderer.burst(x, y, tile.height, 'dust');
       // Clear multi-tile footprints if this is part of one
       if (tile.building !== 'none') {
         const kind = tile.building;
@@ -657,6 +870,7 @@ export class GameApp {
       if (tile.water) return;
       if (!this.spend(TERRAIN_COST)) return;
       tile.height = Math.min(6, tile.height + 1);
+      this.sfx.play('place');
       return;
     }
     if (tool === 'lower') {
@@ -664,6 +878,9 @@ export class GameApp {
       tile.height = Math.max(0, tile.height - 1);
       if (tile.height === 0 && Math.random() < 0.15) {
         tile.water = true;
+        this.renderer.burst(x, y, 0, 'splash');
+      } else {
+        this.sfx.play('place');
       }
       return;
     }
@@ -671,6 +888,7 @@ export class GameApp {
       if (tile.water || tile.building !== 'none') return;
       if (!this.spend(TREE_COST)) return;
       tile.trees = true;
+      this.sfx.play('place');
       return;
     }
     if (tool === 'water') {
@@ -681,6 +899,8 @@ export class GameApp {
       tile.zone = 'none';
       tile.building = 'none';
       tile.road = 'none';
+      this.renderer.burst(x, y, 0, 'splash');
+      this.sfx.play('place');
       return;
     }
 
@@ -690,6 +910,8 @@ export class GameApp {
       if (!map.paintRoad(x, y, road)) {
         this.sim.budget.funds += getTool(tool).cost;
         this.toast("Can't place road");
+      } else {
+        this.sfx.play('place');
       }
       return;
     }
@@ -698,18 +920,21 @@ export class GameApp {
       if (tile.water) return;
       if (!this.spend(getTool(tool).cost)) return;
       tile.powerLine = true;
+      this.sfx.play('place');
       return;
     }
 
     if (tool === 'pipe') {
       if (!this.spend(getTool(tool).cost)) return;
       tile.pipe = true;
+      this.sfx.play('place');
       return;
     }
 
     if (tool === 'subway') {
       if (!this.spend(getTool(tool).cost)) return;
       tile.subway = true;
+      this.sfx.play('place');
       return;
     }
 
@@ -755,8 +980,12 @@ export class GameApp {
           return true;
         });
         this.refreshRewardTools();
+        this.sfx.play('reward');
         this.toast(`${BUILDINGS[building].label} placed!`);
+      } else {
+        this.sfx.play('place');
       }
+      this.renderer.burst(x, y, tile.height, 'dust');
     }
   }
 
@@ -765,13 +994,22 @@ export class GameApp {
     this.hudEls.funds.textContent = `$${this.sim.budget.funds.toLocaleString()}`;
     this.hudEls.date.textContent = this.sim.dateLabel();
     this.hudEls.pop.textContent = `${this.sim.stats.population.toLocaleString()} pop`;
+    this.hudEls.mood.textContent = `${moodFace(this.sim.stats.happiness)} ${this.sim.stats.happiness}`;
     this.setDemandBar(this.hudEls.demandR, this.sim.demand.r);
     this.setDemandBar(this.hudEls.demandC, this.sim.demand.c);
     this.setDemandBar(this.hudEls.demandI, this.sim.demand.i);
+    this.refreshAdvisor();
+    this.refreshTicker();
+    this.drawMinimap();
 
     const newsBody = this.sheets.news.querySelector('.news-body')!;
     const lines = this.sim.newspaper.slice(0, 12);
-    newsBody.innerHTML = `<h3>${this.cityName} Times</h3>${
+    const banner = this.sim.scenario.won
+      ? '<div class="win-banner">Victory</div>'
+      : this.sim.scenario.lost
+        ? '<div class="lose-banner">Scenario Failed</div>'
+        : '';
+    newsBody.innerHTML = `${banner}<h3>${this.cityName} Times</h3>${
       lines.length
         ? lines.map((l) => `<p>${l}</p>`).join('')
         : '<p>No headlines yet. Grow your city!</p>'
@@ -782,8 +1020,74 @@ export class GameApp {
       <div class="budget-line"><span>Income (last mo.)</span><strong>$${this.sim.budget.lastIncome}</strong></div>
       <div class="budget-line"><span>Expenses (last mo.)</span><strong>$${this.sim.budget.lastExpenses}</strong></div>
       <div class="budget-line"><span>Power</span><strong>${this.sim.stats.powerUsed}/${this.sim.stats.powerCapacity}</strong>
-        <span class="muted">Water ${this.sim.stats.waterUsed}/${this.sim.stats.waterCapacity} · Jobs ${this.sim.stats.jobs}</span></div>
+        <span class="muted">Water ${this.sim.stats.waterUsed}/${this.sim.stats.waterCapacity} · Jobs ${this.sim.stats.jobs} · Approval ${this.sim.stats.happiness}%</span></div>
     `;
+  }
+
+  private refreshAdvisor(): void {
+    if (!this.sim) return;
+    const line = advise(this.sim);
+    if (line !== this.lastAdvice) {
+      this.lastAdvice = line;
+      this.advisorText.textContent = line;
+      this.advisorEl.classList.add('show');
+    }
+  }
+
+  private refreshTicker(): void {
+    if (!this.sim) return;
+    const head = this.sim.newspaper[0];
+    this.tickerEl.textContent = head
+      ? `${this.cityName} Times — ${head}`
+      : `${this.cityName} Times — Awaiting the first headline.`;
+  }
+
+  private drawMinimap(): void {
+    if (!this.sim) return;
+    const size = this.sim.map.size;
+    if (this.minimap.width !== size) {
+      this.minimap.width = size;
+      this.minimap.height = size;
+    }
+    const ctx = this.minimap.getContext('2d');
+    if (!ctx) return;
+    const img = ctx.createImageData(size, size);
+    this.sim.map.forEach((t, x, y) => {
+      const i = (y * size + x) * 4;
+      let r = 40;
+      let g = 80;
+      let b = 50;
+      if (t.water) {
+        r = 58;
+        g = 124;
+        b = 165;
+      } else if (t.zone.startsWith('r')) {
+        r = 74;
+        g = 158;
+        b = 92;
+      } else if (t.zone.startsWith('c')) {
+        r = 74;
+        g = 126;
+        b = 196;
+      } else if (t.zone.startsWith('i')) {
+        r = 196;
+        g = 160;
+        b = 58;
+      } else if (t.road !== 'none') {
+        r = 90;
+        g = 90;
+        b = 90;
+      } else if (t.building !== 'none') {
+        r = 200;
+        g = 180;
+        b = 80;
+      }
+      img.data[i] = r;
+      img.data[i + 1] = g;
+      img.data[i + 2] = b;
+      img.data[i + 3] = 255;
+    });
+    ctx.putImageData(img, 0, 0);
   }
 
   private setDemandBar(el: HTMLElement, value: number): void {
@@ -829,6 +1133,7 @@ export class GameApp {
   private openSheet(name: string): void {
     if (name === 'budget') this.syncBudgetForm();
     if (name === 'news') this.updateHud();
+    if (name === 'maps') this.drawMinimap();
     this.sheets[name]?.classList.add('open');
   }
 
@@ -892,13 +1197,19 @@ export class GameApp {
 function buildDom(): string {
   return `
   <section id="menu-screen" class="screen">
+    <div class="menu-skyline" aria-hidden="true"></div>
     <h1 class="brand">CitySim</h1>
     <p class="tagline">Mayor of the isometric age</p>
+    <label class="city-name-field">
+      <span>City name</span>
+      <input id="city-name" type="text" maxlength="24" placeholder="New City" autocomplete="off" />
+    </label>
     <div class="menu-actions">
       <button class="btn primary" id="btn-new">New City</button>
       <button class="btn" id="btn-load">Load City</button>
       <button class="btn" id="btn-scenarios">Scenarios</button>
     </div>
+    <p class="menu-hint">Power · Roads · Zones. Pinch to zoom. Long-press to inspect.</p>
   </section>
 
   <div id="game-shell" class="game-shell">
@@ -907,6 +1218,7 @@ function buildDom(): string {
         <span class="stat">Funds <strong id="hud-funds">$0</strong></span>
         <span class="stat" id="hud-date">Jan 1900</span>
         <span class="stat" id="hud-pop">0 pop</span>
+        <span class="stat mood" id="hud-mood">🙂 55</span>
       </div>
       <div class="hud-center">
         <div class="demand-bars">
@@ -916,18 +1228,25 @@ function buildDom(): string {
         </div>
       </div>
       <div class="hud-right">
+        <span class="stat" id="hud-clock">9:00 AM</span>
         <span class="stat" id="hud-tool">Road</span>
       </div>
     </header>
+    <div id="ticker" class="ticker">${'Awaiting the first headline.'}</div>
 
     <div class="canvas-wrap">
       <canvas id="game-canvas"></canvas>
       <div id="layer-badge" class="layer-badge"></div>
       <div id="query-chip" class="query-chip"></div>
+      <div id="advisor" class="advisor show">
+        <div class="advisor-face" aria-hidden="true">🎩</div>
+        <p id="advisor-text">Place a power plant, pave roads, then zone R / C / I.</p>
+      </div>
       <div id="toast" class="toast"></div>
     </div>
 
     <footer class="dock">
+      <div id="dock-cats" class="dock-cats"></div>
       <div id="dock-scroll" class="dock-scroll"></div>
       <div class="dock-meta">
         <div class="speed-group">
@@ -941,6 +1260,7 @@ function buildDom(): string {
         <button class="btn" id="btn-maps">Maps</button>
         <button class="btn" id="btn-news">News</button>
         <button class="btn" id="btn-save">Save</button>
+        <button class="btn icon" id="btn-sound" title="Sound">🔊</button>
         <button class="btn ghost" id="btn-menu">Menu</button>
       </div>
     </footer>
@@ -977,6 +1297,8 @@ function buildDom(): string {
         <button class="btn" data-overlay="crime">Crime</button>
         <button class="btn" data-overlay="traffic">Traffic</button>
       </div>
+      <p class="minimap-label">Tap the map to jump the camera</p>
+      <canvas id="minimap" class="minimap" width="64" height="64"></canvas>
     </div>
   </div>
 

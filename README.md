@@ -33,9 +33,12 @@ npm run preview
 - **Pinch** / mouse wheel to zoom
 - **Tap / drag** with a tool to zone, pave roads, string power lines, etc.
 - **Long-press** to query a tile
+- **Tool categories** (Zone / Roads / Power / Water / Civic / Land) keep the dock short
 - **Layer** toggles underground (pipes / subway)
-- **Budget / Maps / News** open full-screen sheets
+- **Budget / Maps / News** open full-screen sheets — Maps includes a tap-to-jump minimap
 - **Save** writes to `localStorage` (also auto-saves when returning to Menu)
+
+Desktop extras: `WASD` / arrows pan, `1`–`3` speed, `Space` pause, `R` road, `B` bulldoze, `Q` query.
 
 ## Classic loop
 
@@ -43,8 +46,10 @@ npm run preview
 2. Zone Residential / Commercial / Industrial (light or dense)
 3. Connect with roads
 4. Add water pumps near water + underground pipes for denser growth
-5. Fund police/fire/schools; watch demand bars and the newspaper
+5. Fund police/fire/schools; watch demand bars, approval, and the newspaper
 6. Hit population milestones for reward buildings (City Hall, Stadium, TV, Rocket)
+
+Power and water **capacity now matter** — overbuild the grid and you'll get blackouts. Seaports boost industry; airports boost commercial demand. Keep citizens happy with parks, schools, and sane taxes.
 
 ## Scenarios
 

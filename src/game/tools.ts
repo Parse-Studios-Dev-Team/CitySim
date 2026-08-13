@@ -66,6 +66,20 @@ export interface ToolDef {
   drag: boolean;
 }
 
+export const TOOL_CATEGORIES: Array<{
+  id: Exclude<ToolDef['group'], 'reward'>;
+  label: string;
+  glyph: string;
+}> = [
+  { id: 'nav', label: 'Edit', glyph: '✥' },
+  { id: 'zone', label: 'Zone', glyph: 'RCI' },
+  { id: 'transit', label: 'Roads', glyph: '═' },
+  { id: 'power', label: 'Power', glyph: '⚡' },
+  { id: 'water', label: 'Water', glyph: '≈' },
+  { id: 'service', label: 'Civic', glyph: '★' },
+  { id: 'terrain', label: 'Land', glyph: '▲' },
+];
+
 export const TOOLS: ToolDef[] = [
   { id: 'pan', label: 'Pan', glyph: '✥', cost: 0, group: 'nav', drag: false },
   { id: 'query', label: 'Query', glyph: '?', cost: 0, group: 'nav', drag: false },
