@@ -77,16 +77,19 @@ export class IsoRenderer {
       }
     }
 
+    if (sky.night > 0.2) {
+      ctx.fillStyle = `rgba(8, 12, 32, ${sky.night * 0.16})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+
     this.life.draw(ctx, camera, map, sky.night);
+
+    if (sky.night > 0.35) {
+      this.drawLights(map, camera, w, h, margin, sky.night);
+    }
 
     if (fx.monster) {
       this.drawMonster(camera, map, fx.monster.px, fx.monster.py, fx.time);
-    }
-
-    if (sky.night > 0.15) {
-      ctx.fillStyle = `rgba(8, 12, 32, ${sky.night * 0.42})`;
-      ctx.fillRect(0, 0, w, h);
-      this.drawLights(map, camera, w, h, margin, sky.night);
     }
 
     if (dragRect) {
