@@ -1,21 +1,28 @@
 import type { TileMap } from '../map/TileMap';
 import type { OverlayMode, Tile, ViewLayer } from '../map/layers';
 import { isPowerPlant } from '../map/layers';
+import { drawBuildingSprite, drawGhostFootprint } from './buildings';
 import type { IsoCamera } from './camera';
-import { PALETTE, buildingFill, buildingHeightPx, zoneColor } from './sprites';
+import { CityLife } from './life';
+import { sampleSky } from './sky';
+import { PALETTE, shade, tileHash, zoneColor } from './sprites';
+
+export interface RenderFx {
+  time: number;
+  dt: number;
+  timeOfDay: number;
+  ghost: { x: number; y: number; w: number; h: number; ok: boolean } | null;
+  monster: { px: number; py: number } | null;
+}
 
 export class IsoRenderer {
-  private dirty = true;
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
+  readonly life = new CityLife();
 
   constructor(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) {
     this.canvas = canvas;
     this.ctx = ctx;
-  }
-
-  markDirty(): void {
-    this.dirty = true;
   }
 
   resize(cssW: number, cssH: number): void {
@@ -25,7 +32,10 @@ export class IsoRenderer {
     this.canvas.style.width = `${cssW}px`;
     this.canvas.style.height = `${cssH}px`;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.dirty = true;
+  }
+
+  burst(x: number, y: number, h: number, kind: 'dust' | 'spark' | 'splash'): void {
+    this.life.burst(x, y, h, kind);
   }
 
   render(
@@ -35,34 +45,51 @@ export class IsoRenderer {
     view: ViewLayer,
     hover: { x: number; y: number } | null,
     dragRect: { x0: number; y0: number; x1: number; y1: number } | null,
+    fx: RenderFx,
   ): void {
-    if (!this.dirty) {
-      // Still redraw each frame for smooth camera; dirty flag reserved for future chunking
-    }
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
     const ctx = this.ctx;
     ctx.clearRect(0, 0, w, h);
 
-    // Soft horizon
+    const sky = sampleSky(fx.timeOfDay);
     const grad = ctx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0, '#24553a');
-    grad.addColorStop(0.55, '#163526');
-    grad.addColorStop(1, '#0f2418');
+    grad.addColorStop(0, sky.top);
+    grad.addColorStop(0.55, sky.mid);
+    grad.addColorStop(1, sky.bot);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
+    this.drawSunOrMoon(camera, w, h, fx.timeOfDay, sky.night);
 
-    const order: Array<{ x: number; y: number }> = [];
-    for (let y = 0; y < map.size; y++) {
-      for (let x = 0; x < map.size; x++) {
-        order.push({ x, y });
+    this.life.tick(fx.dt, map);
+
+    const margin = 90 * camera.zoom;
+    const size = map.size;
+    for (let d = 0; d < size * 2 - 1; d++) {
+      const x0 = Math.max(0, d - (size - 1));
+      const x1 = Math.min(d, size - 1);
+      for (let x = x0; x <= x1; x++) {
+        const y = d - x;
+        const tile = map.get(x, y)!;
+        const { sx, sy } = camera.worldToScreen(x, y, tile.height);
+        if (sx < -margin || sx > w + margin || sy < -margin || sy > h + margin) continue;
+        this.drawTile(map, camera, tile, x, y, overlay, view, fx, sky.night);
       }
     }
-    order.sort((a, b) => a.x + a.y - (b.x + b.y) || a.x - b.x);
 
-    for (const { x, y } of order) {
-      const tile = map.get(x, y)!;
-      this.drawTile(map, camera, tile, x, y, overlay, view);
+    if (sky.night > 0.2) {
+      ctx.fillStyle = `rgba(8, 12, 32, ${sky.night * 0.16})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    this.life.draw(ctx, camera, map, sky.night);
+
+    if (sky.night > 0.35) {
+      this.drawLights(map, camera, w, h, margin, sky.night);
+    }
+
+    if (fx.monster) {
+      this.drawMonster(camera, map, fx.monster.px, fx.monster.py, fx.time);
     }
 
     if (dragRect) {
@@ -82,15 +109,86 @@ export class IsoRenderer {
       ctx.restore();
     }
 
+    if (fx.ghost) {
+      const t = map.get(fx.ghost.x, fx.ghost.y);
+      drawGhostFootprint(
+        ctx,
+        camera,
+        fx.ghost.x,
+        fx.ghost.y,
+        fx.ghost.w,
+        fx.ghost.h,
+        t?.height ?? 2,
+        fx.ghost.ok,
+      );
+    }
+
     if (hover && map.inBounds(hover.x, hover.y)) {
       const t = map.get(hover.x, hover.y)!;
       ctx.save();
-      ctx.globalAlpha = 0.55;
+      ctx.globalAlpha = 0.5;
       this.drawDiamond(camera, hover.x, hover.y, t.height, '#ffffff', true);
       ctx.restore();
     }
+  }
 
-    this.dirty = false;
+  private drawSunOrMoon(
+    _camera: IsoCamera,
+    w: number,
+    h: number,
+    timeOfDay: number,
+    night: number,
+  ): void {
+    const ctx = this.ctx;
+    const ang = timeOfDay * Math.PI * 2 - Math.PI / 2;
+    const cx = w * 0.5 + Math.cos(ang) * w * 0.38;
+    const cy = h * 0.42 + Math.sin(ang) * h * 0.28;
+    if (cy > h * 0.75) return;
+    if (night > 0.55) {
+      ctx.fillStyle = '#f0f0e8';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 16, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = sampleSky(timeOfDay).top;
+      ctx.beginPath();
+      ctx.arc(cx + 6, cy - 2, 14, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      const g = ctx.createRadialGradient(cx, cy, 4, cx, cy, 42);
+      g.addColorStop(0, '#ffe9a0');
+      g.addColorStop(0.4, '#e8c547');
+      g.addColorStop(1, 'rgba(232,197,71,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 42, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  private drawLights(
+    map: TileMap,
+    camera: IsoCamera,
+    w: number,
+    h: number,
+    margin: number,
+    night: number,
+  ): void {
+    const ctx = this.ctx;
+    const z = camera.zoom;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, night);
+    map.forEach((tile, x, y) => {
+      if (tile.road === 'none' && !tile.powered) return;
+      const { sx, sy } = camera.worldToScreen(x, y, tile.height);
+      if (sx < -margin || sx > w + margin || sy < -margin || sy > h + margin) return;
+      if (tile.road !== 'none' && (x + y) % 3 === 0) {
+        ctx.fillStyle = 'rgba(240,216,120,0.55)';
+        ctx.beginPath();
+        ctx.arc(sx, sy - 3 * z, 2.4 * z, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+    ctx.restore();
   }
 
   private drawTile(
@@ -101,6 +199,8 @@ export class IsoRenderer {
     y: number,
     overlay: OverlayMode,
     view: ViewLayer,
+    fx: RenderFx,
+    night: number,
   ): void {
     if (view === 'underground') {
       this.drawUnderground(camera, tile, x, y, overlay);
@@ -109,7 +209,7 @@ export class IsoRenderer {
 
     const h = tile.height;
     if (tile.water) {
-      this.drawWater(camera, x, y, h);
+      this.drawWater(map, camera, x, y, h, fx.time);
     } else {
       this.drawGround(camera, x, y, h, tile);
     }
@@ -120,6 +220,8 @@ export class IsoRenderer {
       if (tile.zone.includes('dense')) {
         this.drawZoneHatch(camera, x, y, h);
       }
+      if (tile.zone === 'seaport') this.drawDock(camera, x, y, h);
+      if (tile.zone === 'airport') this.drawRunway(camera, x, y, h);
     }
 
     if (tile.trees && tile.building === 'none' && tile.road === 'none') {
@@ -135,11 +237,11 @@ export class IsoRenderer {
     }
 
     if (tile.building !== 'none' && !tile.footprint) {
-      this.drawBuilding(camera, tile, x, y);
+      drawBuildingSprite(this.ctx, camera, tile, x, y, fx.time, night);
     }
 
     if (tile.onFire) {
-      this.drawFire(camera, x, y, h);
+      this.drawFire(camera, x, y, h, fx.time);
     }
 
     if (overlay !== 'none') {
@@ -165,9 +267,12 @@ export class IsoRenderer {
       ctx.beginPath();
       ctx.arc(sx, sy, 4 * camera.zoom, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = '#e8c547';
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
     if (tile.building === 'pump' || tile.building === 'water_tower' || tile.building === 'treatment') {
-      this.drawBuilding(camera, tile, x, y);
+      drawBuildingSprite(this.ctx, camera, tile, x, y, 0, 0);
     }
     if (overlay === 'water') {
       this.drawOverlay(camera, tile, x, y, 'water');
@@ -175,24 +280,69 @@ export class IsoRenderer {
   }
 
   private drawGround(camera: IsoCamera, x: number, y: number, h: number, tile: Tile): void {
-    const base = h >= 4 ? PALETTE.dirt : h <= 1 ? PALETTE.grassDark : PALETTE.grass;
-    this.drawBlock(camera, x, y, h, base, PALETTE.grassDark, PALETTE.grassLight);
+    const hash = tileHash(x, y);
+    let top = h >= 4 ? PALETTE.dirt : h <= 1 ? PALETTE.grassDark : PALETTE.grass;
+    if (h >= 5) top = shade(PALETTE.dirt, 0.12);
+    if (hash > 0.7 && h < 4) top = shade(top, 0.06);
+    this.drawBlock(camera, x, y, h, top, PALETTE.grassDark, PALETTE.grassLight);
     if (tile.flooded) {
       this.drawDiamond(camera, x, y, h, 'rgba(58,124,165,0.45)', true);
     }
   }
 
-  private drawWater(camera: IsoCamera, x: number, y: number, h: number): void {
-    this.drawDiamond(camera, x, y, h, PALETTE.water, true);
+  private drawWater(map: TileMap, camera: IsoCamera, x: number, y: number, h: number, time: number): void {
+    const pulse = 0.5 + 0.5 * Math.sin(time * 0.0022 + x * 0.55 + y * 0.4);
+    const col = pulse > 0.55 ? PALETTE.waterLite : PALETTE.water;
+    this.drawDiamond(camera, x, y, h, col, true);
     const { sx, sy } = camera.worldToScreen(x, y, h);
     const ctx = this.ctx;
     const z = camera.zoom;
-    ctx.fillStyle = PALETTE.waterLite;
-    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = 'rgba(200,230,245,0.28)';
     ctx.beginPath();
-    ctx.ellipse(sx, sy - 2 * z, 8 * z, 3 * z, 0, 0, Math.PI * 2);
+    ctx.ellipse(sx + Math.sin(time * 0.001 + x) * 3 * z, sy - 2 * z, 7 * z, 2.5 * z, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.globalAlpha = 1;
+
+    const shore =
+      map.neighbors4(x, y).some((n) => !n.tile.water);
+    if (shore) {
+      ctx.strokeStyle = 'rgba(210, 232, 220, 0.35)';
+      ctx.lineWidth = 1.2 * z;
+      ctx.beginPath();
+      const tw = (camera.tileW / 2) * z;
+      const th = (camera.tileH / 2) * z;
+      ctx.moveTo(sx, sy - th);
+      ctx.lineTo(sx + tw, sy);
+      ctx.lineTo(sx, sy + th);
+      ctx.lineTo(sx - tw, sy);
+      ctx.closePath();
+      ctx.stroke();
+    }
+  }
+
+  private drawDock(camera: IsoCamera, x: number, y: number, h: number): void {
+    const { sx, sy } = camera.worldToScreen(x, y, h);
+    const z = camera.zoom;
+    const ctx = this.ctx;
+    ctx.strokeStyle = '#6a5040';
+    ctx.lineWidth = 2 * z;
+    ctx.beginPath();
+    ctx.moveTo(sx - 6 * z, sy);
+    ctx.lineTo(sx + 6 * z, sy);
+    ctx.stroke();
+  }
+
+  private drawRunway(camera: IsoCamera, x: number, y: number, h: number): void {
+    const { sx, sy } = camera.worldToScreen(x, y, h);
+    const z = camera.zoom;
+    const ctx = this.ctx;
+    ctx.strokeStyle = '#e8e8e8';
+    ctx.lineWidth = 1.4 * z;
+    ctx.setLineDash([3 * z, 3 * z]);
+    ctx.beginPath();
+    ctx.moveTo(sx - 8 * z, sy);
+    ctx.lineTo(sx + 8 * z, sy);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   private drawBlock(
@@ -212,7 +362,6 @@ export class IsoRenderer {
     const topY = sy;
     const baseY = sy + hs * Math.max(1, h === 0 ? 0.4 : 0.85);
 
-    // left face
     ctx.fillStyle = left;
     ctx.beginPath();
     ctx.moveTo(sx - tw, topY);
@@ -222,7 +371,6 @@ export class IsoRenderer {
     ctx.closePath();
     ctx.fill();
 
-    // right face
     ctx.fillStyle = right;
     ctx.beginPath();
     ctx.moveTo(sx + tw, topY);
@@ -232,7 +380,6 @@ export class IsoRenderer {
     ctx.closePath();
     ctx.fill();
 
-    // top
     ctx.fillStyle = top;
     ctx.beginPath();
     ctx.moveTo(sx, topY - th);
@@ -285,16 +432,34 @@ export class IsoRenderer {
     const ctx = this.ctx;
     const { sx, sy } = camera.worldToScreen(x, y, h);
     const z = camera.zoom;
+    const pine = h >= 4 || tileHash(x, y) > 0.72;
     ctx.fillStyle = '#4a3420';
     ctx.fillRect(sx - 1 * z, sy - 6 * z, 2 * z, 6 * z);
-    ctx.fillStyle = PALETTE.treeTop;
-    ctx.beginPath();
-    ctx.arc(sx, sy - 10 * z, 6 * z, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = PALETTE.tree;
-    ctx.beginPath();
-    ctx.arc(sx - 3 * z, sy - 8 * z, 4 * z, 0, Math.PI * 2);
-    ctx.fill();
+    if (pine) {
+      ctx.fillStyle = PALETTE.tree;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy - 16 * z);
+      ctx.lineTo(sx + 6 * z, sy - 4 * z);
+      ctx.lineTo(sx - 6 * z, sy - 4 * z);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = PALETTE.treeTop;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy - 18 * z);
+      ctx.lineTo(sx + 4 * z, sy - 8 * z);
+      ctx.lineTo(sx - 4 * z, sy - 8 * z);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      ctx.fillStyle = PALETTE.treeTop;
+      ctx.beginPath();
+      ctx.arc(sx, sy - 10 * z, 6 * z, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = PALETTE.tree;
+      ctx.beginPath();
+      ctx.arc(sx - 3 * z, sy - 8 * z, 4 * z, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   private drawRoad(map: TileMap, camera: IsoCamera, tile: Tile, x: number, y: number): void {
@@ -304,7 +469,7 @@ export class IsoRenderer {
     const color =
       tile.road === 'rail' ? PALETTE.rail : tile.road === 'highway' ? PALETTE.highway : PALETTE.road;
     ctx.strokeStyle = color;
-    ctx.lineWidth = (tile.road === 'highway' ? 7 : 5) * z;
+    ctx.lineWidth = (tile.road === 'highway' ? 8 : 5.5) * z;
     ctx.lineCap = 'round';
     const n = map.neighbors4(x, y);
     let drew = false;
@@ -326,9 +491,27 @@ export class IsoRenderer {
     if (tile.road === 'road') {
       ctx.strokeStyle = PALETTE.roadLine;
       ctx.lineWidth = 1 * z;
+      ctx.setLineDash([3 * z, 3 * z]);
       ctx.beginPath();
       ctx.moveTo(sx - 3 * z, sy);
       ctx.lineTo(sx + 3 * z, sy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else if (tile.road === 'highway') {
+      ctx.strokeStyle = '#e8c547';
+      ctx.lineWidth = 1.2 * z;
+      ctx.setLineDash([4 * z, 4 * z]);
+      ctx.beginPath();
+      ctx.moveTo(sx - 4 * z, sy);
+      ctx.lineTo(sx + 4 * z, sy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else if (tile.road === 'rail') {
+      ctx.strokeStyle = '#3a3028';
+      ctx.lineWidth = 1 * z;
+      ctx.beginPath();
+      ctx.moveTo(sx - 4 * z, sy - 2 * z);
+      ctx.lineTo(sx + 4 * z, sy + 2 * z);
       ctx.stroke();
     }
   }
@@ -354,82 +537,49 @@ export class IsoRenderer {
     }
   }
 
-  private drawBuilding(camera: IsoCamera, tile: Tile, x: number, y: number): void {
-    const ctx = this.ctx;
-    const kind = tile.building;
-    const bh = buildingHeightPx(kind, tile.buildingStage) * camera.zoom;
-    const { sx, sy } = camera.worldToScreen(x, y, tile.height);
-    const tw = (camera.tileW / 2) * camera.zoom * 0.72;
-    const th = (camera.tileH / 2) * camera.zoom * 0.72;
-    const fill = buildingFill(kind);
-    const top = sy - bh;
-
-    ctx.fillStyle = shade(fill, -0.25);
-    ctx.beginPath();
-    ctx.moveTo(sx - tw, sy);
-    ctx.lineTo(sx, sy + th);
-    ctx.lineTo(sx, top + th);
-    ctx.lineTo(sx - tw, top);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = shade(fill, 0.1);
-    ctx.beginPath();
-    ctx.moveTo(sx + tw, sy);
-    ctx.lineTo(sx, sy + th);
-    ctx.lineTo(sx, top + th);
-    ctx.lineTo(sx + tw, top);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = fill;
-    ctx.beginPath();
-    ctx.moveTo(sx, top - th);
-    ctx.lineTo(sx + tw, top);
-    ctx.lineTo(sx, top + th);
-    ctx.lineTo(sx - tw, top);
-    ctx.closePath();
-    ctx.fill();
-
-    if (kind === 'coal_plant' || kind === 'oil_plant') {
-      ctx.fillStyle = PALETTE.plantAccent;
-      ctx.fillRect(sx - 2 * camera.zoom, top - 8 * camera.zoom, 4 * camera.zoom, 8 * camera.zoom);
-    }
-    if (kind === 'fire') {
-      ctx.fillStyle = PALETTE.fire;
-      ctx.beginPath();
-      ctx.arc(sx, top - 2 * camera.zoom, 3 * camera.zoom, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    if (kind === 'rocket') {
-      ctx.fillStyle = '#eee';
-      ctx.fillRect(sx - 2 * camera.zoom, top - 14 * camera.zoom, 4 * camera.zoom, 14 * camera.zoom);
-    }
-    if (!tile.powered && kind !== 'park' && kind !== 'none') {
-      ctx.fillStyle = 'rgba(200,60,60,0.55)';
-      ctx.beginPath();
-      ctx.arc(sx + 6 * camera.zoom, top - 4 * camera.zoom, 3 * camera.zoom, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  private drawFire(camera: IsoCamera, x: number, y: number, h: number): void {
+  private drawFire(camera: IsoCamera, x: number, y: number, h: number, time: number): void {
     const ctx = this.ctx;
     const { sx, sy } = camera.worldToScreen(x, y, h);
     const z = camera.zoom;
+    const flicker = 0.85 + 0.15 * Math.sin(time * 0.02 + x * 3 + y);
+    const tall = 16 * z * flicker;
     ctx.fillStyle = '#ff6a00';
     ctx.beginPath();
-    ctx.moveTo(sx, sy - 16 * z);
+    ctx.moveTo(sx, sy - tall);
     ctx.lineTo(sx + 6 * z, sy - 2 * z);
     ctx.lineTo(sx - 6 * z, sy - 2 * z);
     ctx.closePath();
     ctx.fill();
     ctx.fillStyle = '#ffd000';
     ctx.beginPath();
-    ctx.moveTo(sx, sy - 12 * z);
+    ctx.moveTo(sx, sy - tall * 0.7);
     ctx.lineTo(sx + 3 * z, sy - 3 * z);
     ctx.lineTo(sx - 3 * z, sy - 3 * z);
     ctx.closePath();
+    ctx.fill();
+  }
+
+  private drawMonster(camera: IsoCamera, map: TileMap, px: number, py: number, time: number): void {
+    const t = map.get(Math.round(px), Math.round(py));
+    const h = t ? t.height : 2;
+    const { sx, sy } = camera.worldToScreen(px, py, h);
+    const z = camera.zoom;
+    const bob = Math.sin(time * 0.01) * 3 * z;
+    const ctx = this.ctx;
+    ctx.fillStyle = '#5a3a78';
+    ctx.beginPath();
+    ctx.ellipse(sx, sy - 18 * z + bob, 14 * z, 10 * z, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#4a2a62';
+    ctx.fillRect(sx - 10 * z, sy - 12 * z + bob, 5 * z, 14 * z);
+    ctx.fillRect(sx + 5 * z, sy - 12 * z + bob, 5 * z, 14 * z);
+    ctx.fillStyle = '#e8c547';
+    ctx.beginPath();
+    ctx.arc(sx + 5 * z, sy - 22 * z + bob, 3 * z, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#1a1020';
+    ctx.beginPath();
+    ctx.arc(sx + 5 * z, sy - 22 * z + bob, 1.2 * z, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -479,17 +629,4 @@ export class IsoRenderer {
     this.drawDiamond(camera, x, y, tile.height, color, true);
     this.ctx.restore();
   }
-}
-
-function shade(hex: string, amt: number): string {
-  const c = hex.replace('#', '');
-  if (c.length !== 6) return hex;
-  const num = parseInt(c, 16);
-  let r = (num >> 16) & 0xff;
-  let g = (num >> 8) & 0xff;
-  let b = num & 0xff;
-  r = Math.max(0, Math.min(255, Math.round(r + 255 * amt)));
-  g = Math.max(0, Math.min(255, Math.round(g + 255 * amt)));
-  b = Math.max(0, Math.min(255, Math.round(b + 255 * amt)));
-  return `rgb(${r},${g},${b})`;
 }

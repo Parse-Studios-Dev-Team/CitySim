@@ -77,7 +77,12 @@ export function hydrateFromSave(data: SaveData): {
     budget,
     year: data.year,
     month: data.month,
-    disasters: data.disasters,
+    disasters: {
+      enabled: data.disasters?.enabled ?? true,
+      active: data.disasters?.active ?? 'none',
+      message: data.disasters?.message ?? null,
+      monster: data.disasters?.monster ?? null,
+    },
     rewards: data.rewards,
     newspaper: data.newspaper ?? [],
     scenario: {

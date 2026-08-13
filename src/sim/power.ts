@@ -2,7 +2,7 @@ import { BUILDINGS } from '../data/buildings';
 import type { TileMap } from '../map/TileMap';
 import { isPowerPlant } from '../map/layers';
 
-export function updatePower(map: TileMap): { supplied: number; capacity: number } {
+export function updatePower(map: TileMap): { supplied: number; capacity: number; brownout: boolean } {
   map.forEach((t) => {
     t.powered = false;
   });
@@ -43,13 +43,6 @@ export function updatePower(map: TileMap): { supplied: number; capacity: number 
     }
   }
 
-  let supplied = 0;
-  map.forEach((tile) => {
-    if (tile.powered && tile.building !== 'none' && !tile.footprint) {
-      supplied += BUILDINGS[tile.building].powerUse;
-    }
-  });
-
   let capacity = 0;
   map.forEach((tile) => {
     if (isPowerPlant(tile.building) && !tile.footprint) {
@@ -57,5 +50,30 @@ export function updatePower(map: TileMap): { supplied: number; capacity: number 
     }
   });
 
-  return { supplied, capacity };
+  const consumers: Array<{ x: number; y: number; use: number; land: number }> = [];
+  let demand = 0;
+  map.forEach((tile, x, y) => {
+    if (!tile.powered || tile.footprint || tile.building === 'none') return;
+    if (isPowerPlant(tile.building)) return;
+    const use = BUILDINGS[tile.building].powerUse;
+    if (use <= 0) return;
+    demand += use;
+    consumers.push({ x, y, use, land: tile.landValue });
+  });
+
+  let brownout = false;
+  if (demand > capacity) {
+    brownout = true;
+    consumers.sort((a, b) => a.land - b.land);
+    let extra = demand - capacity;
+    for (const c of consumers) {
+      if (extra <= 0) break;
+      const t = map.get(c.x, c.y)!;
+      t.powered = false;
+      extra -= c.use;
+      demand -= c.use;
+    }
+  }
+
+  return { supplied: Math.max(0, demand), capacity, brownout };
 }

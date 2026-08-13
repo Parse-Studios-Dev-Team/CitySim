@@ -1,7 +1,7 @@
 import { BUILDINGS } from '../data/buildings';
 import type { TileMap } from '../map/TileMap';
 
-export function updateWater(map: TileMap): { capacity: number; used: number } {
+export function updateWater(map: TileMap): { capacity: number; used: number; drought: boolean } {
   map.forEach((t) => {
     t.watered = false;
   });
@@ -61,12 +61,32 @@ export function updateWater(map: TileMap): { capacity: number; used: number } {
     }
   });
 
+  const consumers: Array<{ x: number; y: number; use: number; land: number }> = [];
   let used = 0;
-  map.forEach((tile) => {
-    if (tile.watered && tile.building !== 'none' && !tile.footprint) {
-      used += BUILDINGS[tile.building].waterUse;
+  map.forEach((tile, x, y) => {
+    if (!tile.watered || tile.footprint || tile.building === 'none') return;
+    if (tile.building === 'pump' || tile.building === 'water_tower' || tile.building === 'treatment') {
+      return;
     }
+    const use = BUILDINGS[tile.building].waterUse;
+    if (use <= 0) return;
+    used += use;
+    consumers.push({ x, y, use, land: tile.landValue });
   });
 
-  return { capacity, used };
+  let drought = false;
+  if (used > capacity) {
+    drought = true;
+    consumers.sort((a, b) => a.land - b.land);
+    let extra = used - capacity;
+    for (const c of consumers) {
+      if (extra <= 0) break;
+      const t = map.get(c.x, c.y)!;
+      t.watered = false;
+      extra -= c.use;
+      used -= c.use;
+    }
+  }
+
+  return { capacity, used: Math.max(0, used), drought };
 }

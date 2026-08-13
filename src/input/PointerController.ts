@@ -8,6 +8,7 @@ export interface PointerHandlers {
   onLongPress: (x: number, y: number) => void;
   onPan: (dx: number, dy: number) => void;
   shouldPaintDrag: () => boolean;
+  onHover?: (x: number, y: number) => void;
 }
 
 export class PointerController {
@@ -130,7 +131,12 @@ export class PointerController {
   }
 
   private onMove = (e: PointerEvent): void => {
-    if (!this.pointers.has(e.pointerId)) return;
+    if (!this.pointers.has(e.pointerId)) {
+      if (e.pointerType === 'mouse') {
+        this.handlers.onHover?.(this.localFromEvent(e).x, this.localFromEvent(e).y);
+      }
+      return;
+    }
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     e.preventDefault();
 
