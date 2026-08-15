@@ -528,6 +528,23 @@ body {
   font-weight: 400;
 }
 
+.scenario-card .era {
+  display: block;
+  color: var(--ok);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-style: normal;
+  margin-bottom: 0.15rem;
+}
+
+.sheet-lead {
+  margin: 0 0 0.85rem;
+  color: var(--ink-dim);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
 .query-chip {
   position: absolute;
   z-index: 7;

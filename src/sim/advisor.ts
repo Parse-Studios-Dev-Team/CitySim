@@ -3,6 +3,9 @@ import type { Simulation } from './Simulation';
 export function advise(sim: Simulation): string {
   if (sim.scenario.won) return 'Victory! The papers will remember this administration.';
   if (sim.scenario.lost) return 'Bankruptcy. Cut spending, raise taxes, or start a new city.';
+  if (sim.budget.funds >= 1_000_000) {
+    return 'Creative sandbox. The treasury is open, disasters are off — rebuild anything.';
+  }
 
   if (sim.disasters.active === 'monster') {
     return 'A monster is loose! It will pass — then rebuild the wreckage.';

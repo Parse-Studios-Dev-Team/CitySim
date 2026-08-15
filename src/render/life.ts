@@ -46,9 +46,20 @@ export class CityLife {
   private vehicles: Vehicle[] = [];
   private particles: Particle[] = [];
   private flyers: Flyer[] = [];
-  private spawnAcc = 0;
+  private spawnAcc = -5000;
   private smokeAcc = 0;
-  private flyerAcc = 0;
+  private flyerAcc = -18000;
+  private birdAcc = -8000;
+
+  reset(): void {
+    this.vehicles = [];
+    this.particles = [];
+    this.flyers = [];
+    this.spawnAcc = -5000;
+    this.smokeAcc = 0;
+    this.flyerAcc = -18000;
+    this.birdAcc = -8000;
+  }
 
   burst(x: number, y: number, h: number, kind: 'dust' | 'spark' | 'splash'): void {
     const n = kind === 'spark' ? 10 : 8;
@@ -72,18 +83,23 @@ export class CityLife {
     this.spawnAcc += dt;
     this.smokeAcc += dt;
     this.flyerAcc += dt;
+    this.birdAcc += dt;
 
-    if (this.spawnAcc > 420) {
+    if (this.spawnAcc > 2400) {
       this.spawnAcc = 0;
       this.trySpawn(map);
     }
-    if (this.smokeAcc > 180) {
+    if (this.smokeAcc > 420) {
       this.smokeAcc = 0;
       this.spawnSmoke(map);
     }
-    if (this.flyerAcc > 2800) {
+    if (this.flyerAcc > 28000) {
       this.flyerAcc = 0;
-      this.spawnFlyer(map);
+      this.spawnPlane(map);
+    }
+    if (this.birdAcc > 18000) {
+      this.birdAcc = 0;
+      this.spawnBirds(map);
     }
 
     const step = dt * 0.001;
@@ -106,7 +122,7 @@ export class CityLife {
     }
 
     this.vehicles = this.vehicles.filter((v) => map.inBounds(Math.round(v.x), Math.round(v.y)));
-    if (this.vehicles.length > 56) this.vehicles.length = 56;
+    if (this.vehicles.length > 14) this.vehicles.length = 14;
 
     for (const p of this.particles) {
       p.life += dt;
@@ -207,34 +223,59 @@ export class CityLife {
     }
   }
 
-  private trySpawn(map: TileMap): void {
-    const roads: Array<{ x: number; y: number }> = [];
-    const waters: Array<{ x: number; y: number }> = [];
-    map.forEach((t, x, y) => {
-      if (t.road !== 'none' && t.traffic > 4) roads.push({ x, y });
-      else if (t.road !== 'none' && roads.length < 8) roads.push({ x, y });
-      if (t.water) waters.push({ x, y });
+  private census(map: TileMap): { roads: number; pop: number; airports: number; water: number } {
+    let roads = 0;
+    let pop = 0;
+    let airports = 0;
+    let water = 0;
+    map.forEach((t) => {
+      if (t.road !== 'none') roads++;
+      pop += t.population;
+      if (t.zone === 'airport') airports++;
+      if (t.water) water++;
     });
-    if (roads.length && this.vehicles.filter((v) => v.kind === 'car').length < 40) {
-      const p = roads[(Math.random() * roads.length) | 0];
+    return { roads, pop, airports, water };
+  }
+
+  private trySpawn(map: TileMap): void {
+    const { roads, pop, water } = this.census(map);
+    const roadTiles: Array<{ x: number; y: number }> = [];
+    const waterTiles: Array<{ x: number; y: number }> = [];
+    map.forEach((t, x, y) => {
+      if (t.road !== 'none' && t.traffic > 6) roadTiles.push({ x, y });
+      if (t.water) waterTiles.push({ x, y });
+    });
+    if (roadTiles.length === 0 && roads > 0) {
+      map.forEach((t, x, y) => {
+        if (t.road === 'road' || t.road === 'highway') roadTiles.push({ x, y });
+      });
+    }
+
+    const cars = this.vehicles.filter((v) => v.kind === 'car').length;
+    const maxCars = Math.min(10, Math.floor(roads / 16));
+    const cityReady = roads >= 16 && pop >= 40;
+    if (cityReady && cars < maxCars && roadTiles.length && Math.random() < 0.45) {
+      const p = roadTiles[(Math.random() * roadTiles.length) | 0];
       this.vehicles.push({
         x: p.x,
         y: p.y,
         dir: (Math.random() * 4) | 0,
         color: CAR_COLORS[(Math.random() * CAR_COLORS.length) | 0],
         kind: 'car',
-        speed: 1.6 + Math.random() * 1.4,
+        speed: 1.1 + Math.random() * 0.8,
       });
     }
-    if (waters.length && this.vehicles.filter((v) => v.kind === 'boat').length < 6) {
-      const p = waters[(Math.random() * waters.length) | 0];
+
+    const boats = this.vehicles.filter((v) => v.kind === 'boat').length;
+    if (pop >= 120 && water > 20 && boats < 2 && waterTiles.length && Math.random() < 0.2) {
+      const p = waterTiles[(Math.random() * waterTiles.length) | 0];
       this.vehicles.push({
         x: p.x,
         y: p.y,
         dir: (Math.random() * 4) | 0,
         color: '#d8d0c4',
         kind: 'boat',
-        speed: 0.6 + Math.random() * 0.4,
+        speed: 0.5 + Math.random() * 0.3,
       });
     }
   }
@@ -264,29 +305,34 @@ export class CityLife {
     });
   }
 
-  private spawnFlyer(map: TileMap): void {
-    const plane = Math.random() < 0.35;
+  private spawnPlane(map: TileMap): void {
+    const { pop, airports } = this.census(map);
+    if (pop < 350 && airports < 6) return;
+    if (this.flyers.some((f) => f.kind === 'plane')) return;
+    if (Math.random() < 0.4) return;
+    const edge = Math.random() < 0.5;
+    this.flyers.push({
+      x: edge ? -4 : map.size + 4,
+      y: 6 + Math.random() * (map.size - 12),
+      vx: edge ? 1.6 : -1.6,
+      vy: (Math.random() - 0.5) * 0.25,
+      kind: 'plane',
+      life: 22000,
+    });
+  }
+
+  private spawnBirds(map: TileMap): void {
+    if (this.flyers.filter((f) => f.kind === 'bird').length >= 2) return;
+    if (Math.random() < 0.55) return;
     const edge = Math.random() < 0.5;
     this.flyers.push({
       x: edge ? -2 : map.size + 2,
       y: Math.random() * map.size,
-      vx: edge ? 2.8 : -2.8,
-      vy: (Math.random() - 0.5) * 0.8,
-      kind: plane ? 'plane' : 'bird',
-      life: plane ? 18000 : 9000,
+      vx: edge ? 0.9 : -0.9,
+      vy: (Math.random() - 0.5) * 0.5,
+      kind: 'bird',
+      life: 10000,
     });
-    if (!plane) {
-      for (let i = 0; i < 3; i++) {
-        this.flyers.push({
-          x: edge ? -2 - i : map.size + 2 + i,
-          y: Math.random() * map.size,
-          vx: edge ? 1.4 : -1.4,
-          vy: (Math.random() - 0.5) * 1.2,
-          kind: 'bird',
-          life: 8000,
-        });
-      }
-    }
   }
 
   private reroute(v: Vehicle, map: TileMap): void {
