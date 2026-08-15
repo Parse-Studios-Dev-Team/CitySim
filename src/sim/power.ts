@@ -55,6 +55,10 @@ export function updatePower(map: TileMap): { supplied: number; capacity: number;
   map.forEach((tile, x, y) => {
     if (!tile.powered || tile.footprint || tile.building === 'none') return;
     if (isPowerPlant(tile.building)) return;
+    if (tile.building === 'pump' || tile.building === 'water_tower' || tile.building === 'treatment') {
+      demand += BUILDINGS[tile.building].powerUse;
+      return;
+    }
     const use = BUILDINGS[tile.building].powerUse;
     if (use <= 0) return;
     demand += use;

@@ -140,29 +140,42 @@ export class IsoRenderer {
     night: number,
   ): void {
     const ctx = this.ctx;
-    const ang = timeOfDay * Math.PI * 2 - Math.PI / 2;
-    const cx = w * 0.5 + Math.cos(ang) * w * 0.38;
-    const cy = h * 0.42 + Math.sin(ang) * h * 0.28;
-    if (cy > h * 0.75) return;
-    if (night > 0.55) {
-      ctx.fillStyle = '#f0f0e8';
-      ctx.beginPath();
-      ctx.arc(cx, cy, 16, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = sampleSky(timeOfDay).top;
-      ctx.beginPath();
-      ctx.arc(cx + 6, cy - 2, 14, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      const g = ctx.createRadialGradient(cx, cy, 4, cx, cy, 42);
+    const skyH = Math.max(36, h * 0.22);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, w, skyH);
+    ctx.clip();
+
+    const t = ((timeOfDay % 1) + 1) % 1;
+    const dayStart = 0.22;
+    const dayEnd = 0.78;
+    const inDay = t >= dayStart && t <= dayEnd;
+
+    if (inDay && night < 0.7) {
+      const u = (t - dayStart) / (dayEnd - dayStart);
+      const cx = w * (0.1 + u * 0.8);
+      const cy = skyH * (0.72 - Math.sin(u * Math.PI) * 0.42);
+      const g = ctx.createRadialGradient(cx, cy, 3, cx, cy, 28);
       g.addColorStop(0, '#ffe9a0');
-      g.addColorStop(0.4, '#e8c547');
+      g.addColorStop(0.45, '#e8c547');
       g.addColorStop(1, 'rgba(232,197,71,0)');
       ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.arc(cx, cy, 42, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 28, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      const cx = w * 0.78;
+      const cy = skyH * 0.38;
+      ctx.fillStyle = '#f0f0e8';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = sampleSky(timeOfDay).top;
+      ctx.beginPath();
+      ctx.arc(cx + 4, cy - 2, 9, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.restore();
   }
 
   private drawLights(
