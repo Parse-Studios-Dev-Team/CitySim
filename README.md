@@ -8,12 +8,11 @@ Mobile-first isometric city builder inspired by classic SimCity 2000 (SNES-era m
 
 Open this link on your phone — no install, no terminal:
 
-**[▶ Play CitySim](https://java-lib-exercises-framework.trycloudflare.com)**
+**[▶ Play CitySim](https://parse-studios-dev-team.github.io/CitySim/)**
 
 Tap **New City** and start zoning. (Safari → Share → Add to Home Screen for fullscreen.)
 
-> That link is a live demo tunnel from the cloud agent. For a permanent site: GitHub → Settings → Pages → Source **Deploy from a branch** → `gh-pages` / `/` → Save. Then use:
-> `https://parse-studios-dev-team.github.io/CitySim/`
+Streets match the calendar: packed dirt and wagons in 1901, automobiles after 1908, painted lanes in the 1920s. The site is GitHub Pages and republishes when `main` updates.
 
 ## Run locally (optional, developers)
 
