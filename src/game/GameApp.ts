@@ -1,6 +1,8 @@
 import { BUILDINGS } from '../data/buildings';
 import { BULLDOZE_COST, STARTING_FUNDS, TERRAIN_COST, TREE_COST, WATER_PLACE_COST } from '../data/costs';
 import { PointerController } from '../input/PointerController';
+import { CITY_TEMPLATES, buildCity } from '../map/cities';
+import { TERRAIN_TEMPLATES, type TerrainId } from '../map/terrain';
 import { TileMap } from '../map/TileMap';
 import type { OverlayMode, ViewLayer } from '../map/layers';
 import {
@@ -114,6 +116,8 @@ export class GameApp {
       maps: root.querySelector('#sheet-maps')!,
       news: root.querySelector('#sheet-news')!,
       scenarios: root.querySelector('#sheet-scenarios')!,
+      terrain: root.querySelector('#sheet-terrain')!,
+      cities: root.querySelector('#sheet-cities')!,
     };
 
     const ctx = this.canvas.getContext('2d');
@@ -127,6 +131,8 @@ export class GameApp {
     this.bindSheets();
     this.bindKeys();
     this.renderScenarioList();
+    this.renderTerrainList();
+    this.renderCityList();
 
     const loadBtn = root.querySelector('#btn-load') as HTMLButtonElement;
     loadBtn.disabled = !hasSave();
@@ -136,9 +142,10 @@ export class GameApp {
 
   private bindMenu(): void {
     this.menuEl.querySelector('#btn-new')!.addEventListener('click', () => {
-      const input = this.menuEl.querySelector('#city-name') as HTMLInputElement;
-      const name = input.value.trim();
-      this.startNewCity(name || 'New City');
+      this.openSheet('terrain');
+    });
+    this.menuEl.querySelector('#btn-cities')!.addEventListener('click', () => {
+      this.openSheet('cities');
     });
     this.menuEl.querySelector('#btn-load')!.addEventListener('click', () => {
       const data = loadCity();
@@ -326,6 +333,37 @@ export class GameApp {
     }
   }
 
+  private renderTerrainList(): void {
+    const list = this.sheets.terrain.querySelector('.scenario-list')!;
+    list.innerHTML = '';
+    for (const t of TERRAIN_TEMPLATES) {
+      const btn = document.createElement('button');
+      btn.className = 'btn scenario-card';
+      btn.innerHTML = `<strong>${t.title}</strong><span>${t.description}</span>`;
+      btn.addEventListener('click', () => {
+        this.closeSheet('terrain');
+        const input = this.menuEl.querySelector('#city-name') as HTMLInputElement;
+        this.startNewCity(input.value.trim() || t.title, t.id);
+      });
+      list.appendChild(btn);
+    }
+  }
+
+  private renderCityList(): void {
+    const list = this.sheets.cities.querySelector('.scenario-list')!;
+    list.innerHTML = '';
+    for (const c of CITY_TEMPLATES) {
+      const btn = document.createElement('button');
+      btn.className = 'btn scenario-card';
+      btn.innerHTML = `<em class="era">${c.era}</em><strong>${c.title}</strong><span>${c.description}</span>`;
+      btn.addEventListener('click', () => {
+        this.closeSheet('cities');
+        this.startCityTemplate(c.id);
+      });
+      list.appendChild(btn);
+    }
+  }
+
   private bindKeys(): void {
     if (this.keysBound) return;
     this.keysBound = true;
@@ -486,15 +524,39 @@ export class GameApp {
     this.hudEls.tool.textContent = t.cost ? `${t.label} ($${t.cost})` : t.label;
   }
 
-  private startNewCity(name = 'New City'): void {
-    const map = new TileMap();
+  private startNewCity(name = 'New City', terrain: TerrainId = 'valley'): void {
+    const tpl = TERRAIN_TEMPLATES.find((t) => t.id === terrain) ?? TERRAIN_TEMPLATES[0];
+    const map = new TileMap(undefined, tpl.id, tpl.seed);
     const budget = createBudget(STARTING_FUNDS);
     this.cityName = name;
     this.sim = new Simulation(map, budget, 1900);
-    this.sim.pushNews(`Welcome to ${name}, Mayor. Power, roads, then zones — the city will grow.`);
+    this.sim.pushNews(
+      `Welcome to ${name}, Mayor. Map: ${tpl.title}. Power, roads, then zones — the city will grow.`,
+    );
     this.timeOfDay = 0.38;
     this.cameraReady = false;
     this.enterGame();
+  }
+
+  private startCityTemplate(id: string): void {
+    const tpl = CITY_TEMPLATES.find((c) => c.id === id);
+    if (!tpl) return;
+    const map = buildCity(tpl);
+    const budget = createBudget(tpl.funds);
+    this.cityName = tpl.title;
+    this.sim = new Simulation(map, budget, tpl.year);
+    this.sim.disasters.enabled = false;
+    this.sim.rewards.cityHall = true;
+    this.sim.rewards.tvStation = true;
+    this.sim.rewards.rocket = true;
+    this.sim.rewards.stadium = true;
+    this.sim.pushNews(
+      `Creative mode: ${tpl.title} (${tpl.era}). Treasury is open. Disasters are off. Wander and rebuild.`,
+    );
+    this.timeOfDay = tpl.id === 'farfuture' ? 0.72 : tpl.id === 'industrial' ? 0.32 : 0.42;
+    this.cameraReady = false;
+    this.enterGame();
+    this.toast(`${tpl.title} — creative sandbox`);
   }
 
   private startScenario(id: string): void {
@@ -1208,10 +1270,11 @@ function buildDom(): string {
     </label>
     <div class="menu-actions">
       <button class="btn primary" id="btn-new">New City</button>
+      <button class="btn" id="btn-cities">City Templates</button>
       <button class="btn" id="btn-load">Load City</button>
       <button class="btn" id="btn-scenarios">Scenarios</button>
     </div>
-    <p class="menu-hint">Power · Roads · Zones. Pinch to zoom. Long-press to inspect.</p>
+    <p class="menu-hint">Pick a map, or wander a finished city in creative mode.</p>
   </section>
 
   <div id="game-shell" class="game-shell">
@@ -1318,6 +1381,22 @@ function buildDom(): string {
   <div id="sheet-scenarios" class="sheet">
     <div class="sheet-panel">
       <div class="sheet-header"><h2>Scenarios</h2><button class="sheet-close" aria-label="Close">✕</button></div>
+      <div class="scenario-list"></div>
+    </div>
+  </div>
+
+  <div id="sheet-terrain" class="sheet">
+    <div class="sheet-panel">
+      <div class="sheet-header"><h2>Choose a Map</h2><button class="sheet-close" aria-label="Close">✕</button></div>
+      <p class="sheet-lead">Blank land. Same mayor rules — pick the terrain you want to tame.</p>
+      <div class="scenario-list"></div>
+    </div>
+  </div>
+
+  <div id="sheet-cities" class="sheet">
+    <div class="sheet-panel">
+      <div class="sheet-header"><h2>City Templates</h2><button class="sheet-close" aria-label="Close">✕</button></div>
+      <p class="sheet-lead">Finished cities with an open treasury. Disasters off. Rebuild, experiment, get ideas.</p>
       <div class="scenario-list"></div>
     </div>
   </div>

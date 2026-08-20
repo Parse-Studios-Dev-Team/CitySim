@@ -60,18 +60,18 @@ export class CityLife {
   private vehicles: Vehicle[] = [];
   private particles: Particle[] = [];
   private flyers: Flyer[] = [];
-  private spawnAcc = -4000;
+  private spawnAcc = -5000;
   private smokeAcc = 0;
-  private flyerAcc = -16000;
+  private flyerAcc = -18000;
   private birdAcc = -8000;
 
   reset(): void {
     this.vehicles = [];
     this.particles = [];
     this.flyers = [];
-    this.spawnAcc = -4000;
+    this.spawnAcc = -5000;
     this.smokeAcc = 0;
-    this.flyerAcc = -16000;
+    this.flyerAcc = -18000;
     this.birdAcc = -8000;
   }
 
@@ -99,7 +99,7 @@ export class CityLife {
     this.flyerAcc += dt;
     this.birdAcc += dt;
 
-    if (this.spawnAcc > 2600) {
+    if (this.spawnAcc > 2400) {
       this.spawnAcc = 0;
       this.trySpawn(map, year);
     }
@@ -139,7 +139,7 @@ export class CityLife {
     }
 
     this.vehicles = this.vehicles.filter((v) => map.inBounds(Math.round(v.x), Math.round(v.y)));
-    if (this.vehicles.length > 16) this.vehicles.length = 16;
+    if (this.vehicles.length > 14) this.vehicles.length = 14;
 
     for (const p of this.particles) {
       p.life += dt;
@@ -260,9 +260,14 @@ export class CityLife {
     const roadTiles: Array<{ x: number; y: number }> = [];
     const waterTiles: Array<{ x: number; y: number }> = [];
     map.forEach((t, x, y) => {
-      if (t.road === 'road' || t.road === 'highway') roadTiles.push({ x, y });
+      if (t.road !== 'none' && t.traffic > 6) roadTiles.push({ x, y });
       if (t.water) waterTiles.push({ x, y });
     });
+    if (roadTiles.length === 0 && roads > 0) {
+      map.forEach((t, x, y) => {
+        if (t.road === 'road' || t.road === 'highway') roadTiles.push({ x, y });
+      });
+    }
 
     const land = this.vehicles.filter((v) => v.kind !== 'boat');
     const cap = landTrafficCap(year, roads, pop);
@@ -281,7 +286,7 @@ export class CityLife {
     }
 
     const boats = this.vehicles.filter((v) => v.kind === 'boat').length;
-    if (pop >= 80 && water > 20 && boats < 2 && waterTiles.length && Math.random() < 0.22) {
+    if (pop >= 120 && water > 20 && boats < 2 && waterTiles.length && Math.random() < 0.2) {
       const p = waterTiles[(Math.random() * waterTiles.length) | 0];
       this.vehicles.push({
         x: p.x,

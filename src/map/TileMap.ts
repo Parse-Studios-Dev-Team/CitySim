@@ -6,15 +6,16 @@ import {
   type Tile,
   type ZoneType,
 } from './layers';
+import { applyTerrain, type TerrainId } from './terrain';
 
 export class TileMap {
   readonly size: number;
   readonly tiles: Tile[];
 
-  constructor(size = MAP_SIZE) {
+  constructor(size = MAP_SIZE, style: TerrainId = 'valley', seed = Date.now()) {
     this.size = size;
     this.tiles = new Array(size * size);
-    this.generateTerrain();
+    this.generateTerrain(seed, style);
   }
 
   index(x: number, y: number): number {
@@ -43,29 +44,8 @@ export class TileMap {
     }
   }
 
-  generateTerrain(seed = Date.now()): void {
-    const rnd = mulberry32(seed);
-    for (let y = 0; y < this.size; y++) {
-      for (let x = 0; x < this.size; x++) {
-        const nx = x / this.size;
-        const ny = y / this.size;
-        const hill =
-          Math.sin(nx * 6 + seed) * Math.cos(ny * 5) * 1.4 +
-          Math.sin((nx + ny) * 8) * 0.6;
-        let height = Math.max(0, Math.min(6, Math.round(2 + hill + (rnd() - 0.5))));
-        const river =
-          Math.abs(ny - 0.45 - Math.sin(nx * 4) * 0.08) < 0.035 ||
-          Math.abs(nx - 0.62 - Math.cos(ny * 3) * 0.05) < 0.03;
-        const tile = createEmptyTile(river ? 0 : height);
-        if (river) {
-          tile.water = true;
-          tile.height = 0;
-        } else if (height >= 2 && rnd() < 0.12) {
-          tile.trees = true;
-        }
-        this.tiles[this.index(x, y)] = tile;
-      }
-    }
+  generateTerrain(seed = Date.now(), style: TerrainId = 'valley'): void {
+    applyTerrain(this, style, seed);
   }
 
   clearDeveloped(): void {
@@ -175,13 +155,4 @@ export class TileMap {
 
 function isPowerish(b: BuildingKind): boolean {
   return b === 'coal_plant' || b === 'oil_plant' || b === 'nuclear_plant';
-}
-
-function mulberry32(a: number): () => number {
-  return () => {
-    let t = (a += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
 }

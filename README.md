@@ -10,7 +10,7 @@ Open this link on your phone — no install, no terminal:
 
 **[▶ Play CitySim](https://parse-studios-dev-team.github.io/CitySim/)**
 
-Tap **New City** and start zoning. (Safari → Share → Add to Home Screen for fullscreen.)
+Tap **New City** and pick a map, or open **City Templates** for a finished creative-mode city. (Safari → Share → Add to Home Screen for fullscreen.)
 
 Streets match the calendar: packed dirt and wagons in 1901, automobiles after 1908, painted lanes in the 1920s. The site is GitHub Pages and republishes when `main` updates.
 
@@ -49,6 +49,12 @@ Desktop extras: `WASD` / arrows pan, `1`–`3` speed, `Space` pause, `R` road, `
 6. Hit population milestones for reward buildings (City Hall, Stadium, TV, Rocket)
 
 Power and water **capacity now matter** — overbuild the grid and you'll get blackouts. Seaports boost industry; airports boost commercial demand. Keep citizens happy with parks, schools, and sane taxes.
+
+## Maps & city templates
+
+Blank maps: River Valley, Coastal Bay, Twin Isles, Highland Lakes, Archipelago, Great Plains.
+
+Creative cities (unlimited treasury, disasters off): **Millford** (Industrial Revolution), **Fairview** (mid-20th century), **Aether Spire** (45th century).
 
 ## Scenarios
 
