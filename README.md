@@ -12,7 +12,7 @@ Open this link on your phone — no install, no terminal:
 
 Tap **New City** and pick a map, or open **City Templates** for a finished creative-mode city. (Safari → Share → Add to Home Screen for fullscreen.)
 
-The site is GitHub Pages. After merging to `main`, the Actions deploy workflow republishes it automatically.
+Streets match the calendar: packed dirt and wagons in 1901, automobiles after 1908, painted lanes in the 1920s. The site is GitHub Pages and republishes when `main` updates.
 
 ## Run locally (optional, developers)
 

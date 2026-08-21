@@ -4,6 +4,7 @@ import { isPowerPlant } from '../map/layers';
 import { drawBuildingSprite, drawGhostFootprint } from './buildings';
 import type { IsoCamera } from './camera';
 import { CityLife } from './life';
+import { drawStreet } from './roads';
 import { sampleSky } from './sky';
 import { PALETTE, shade, tileHash, zoneColor } from './sprites';
 
@@ -11,6 +12,7 @@ export interface RenderFx {
   time: number;
   dt: number;
   timeOfDay: number;
+  year: number;
   ghost: { x: number; y: number; w: number; h: number; ok: boolean } | null;
   monster: { px: number; py: number } | null;
 }
@@ -61,7 +63,7 @@ export class IsoRenderer {
     ctx.fillRect(0, 0, w, h);
     this.drawSunOrMoon(camera, w, h, fx.timeOfDay, sky.night);
 
-    this.life.tick(fx.dt, map);
+    this.life.tick(fx.dt, map, fx.year);
 
     const margin = 90 * camera.zoom;
     const size = map.size;
@@ -82,10 +84,10 @@ export class IsoRenderer {
       ctx.fillRect(0, 0, w, h);
     }
 
-    this.life.draw(ctx, camera, map, sky.night);
+    this.life.draw(ctx, camera, map, sky.night, fx.year);
 
     if (sky.night > 0.35) {
-      this.drawLights(map, camera, w, h, margin, sky.night);
+      this.drawLights(map, camera, w, h, margin, sky.night, fx.year);
     }
 
     if (fx.monster) {
@@ -185,21 +187,27 @@ export class IsoRenderer {
     h: number,
     margin: number,
     night: number,
+    year: number,
   ): void {
     const ctx = this.ctx;
     const z = camera.zoom;
+    const spacing = year < 1910 ? 5 : 3;
     ctx.save();
     ctx.globalAlpha = Math.min(1, night);
     map.forEach((tile, x, y) => {
-      if (tile.road === 'none' && !tile.powered) return;
+      if (tile.road === 'none') return;
+      if ((x + y) % spacing !== 0) return;
       const { sx, sy } = camera.worldToScreen(x, y, tile.height);
       if (sx < -margin || sx > w + margin || sy < -margin || sy > h + margin) return;
-      if (tile.road !== 'none' && (x + y) % 3 === 0) {
-        ctx.fillStyle = 'rgba(240,216,120,0.55)';
-        ctx.beginPath();
-        ctx.arc(sx, sy - 3 * z, 2.4 * z, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      const tw = (camera.tileW / 2) * z;
+      const lx = sx - tw * 0.62;
+      const ly = sy;
+      ctx.fillStyle = year < 1920 ? '#3a3020' : '#2a2a28';
+      ctx.fillRect(lx - 0.6 * z, ly - 9 * z, 1.2 * z, 9 * z);
+      ctx.fillStyle = year < 1920 ? 'rgba(240, 190, 90, 0.42)' : 'rgba(240, 216, 120, 0.55)';
+      ctx.beginPath();
+      ctx.arc(lx, ly - 9 * z, (year < 1920 ? 1.8 : 2.2) * z, 0, Math.PI * 2);
+      ctx.fill();
     });
     ctx.restore();
   }
@@ -242,7 +250,7 @@ export class IsoRenderer {
     }
 
     if (tile.road !== 'none') {
-      this.drawRoad(map, camera, tile, x, y);
+      drawStreet(this.ctx, camera, map, tile, x, y, fx.year);
     }
 
     if (tile.powerLine) {
@@ -472,60 +480,6 @@ export class IsoRenderer {
       ctx.beginPath();
       ctx.arc(sx - 3 * z, sy - 8 * z, 4 * z, 0, Math.PI * 2);
       ctx.fill();
-    }
-  }
-
-  private drawRoad(map: TileMap, camera: IsoCamera, tile: Tile, x: number, y: number): void {
-    const ctx = this.ctx;
-    const { sx, sy } = camera.worldToScreen(x, y, tile.height);
-    const z = camera.zoom;
-    const color =
-      tile.road === 'rail' ? PALETTE.rail : tile.road === 'highway' ? PALETTE.highway : PALETTE.road;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = (tile.road === 'highway' ? 8 : 5.5) * z;
-    ctx.lineCap = 'round';
-    const n = map.neighbors4(x, y);
-    let drew = false;
-    for (const nb of n) {
-      if (nb.tile.road === 'none') continue;
-      const p = camera.worldToScreen(nb.x, nb.y, nb.tile.height);
-      ctx.beginPath();
-      ctx.moveTo(sx, sy);
-      ctx.lineTo((sx + p.sx) / 2, (sy + p.sy) / 2);
-      ctx.stroke();
-      drew = true;
-    }
-    if (!drew) {
-      ctx.beginPath();
-      ctx.moveTo(sx - 6 * z, sy);
-      ctx.lineTo(sx + 6 * z, sy);
-      ctx.stroke();
-    }
-    if (tile.road === 'road') {
-      ctx.strokeStyle = PALETTE.roadLine;
-      ctx.lineWidth = 1 * z;
-      ctx.setLineDash([3 * z, 3 * z]);
-      ctx.beginPath();
-      ctx.moveTo(sx - 3 * z, sy);
-      ctx.lineTo(sx + 3 * z, sy);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    } else if (tile.road === 'highway') {
-      ctx.strokeStyle = '#e8c547';
-      ctx.lineWidth = 1.2 * z;
-      ctx.setLineDash([4 * z, 4 * z]);
-      ctx.beginPath();
-      ctx.moveTo(sx - 4 * z, sy);
-      ctx.lineTo(sx + 4 * z, sy);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    } else if (tile.road === 'rail') {
-      ctx.strokeStyle = '#3a3028';
-      ctx.lineWidth = 1 * z;
-      ctx.beginPath();
-      ctx.moveTo(sx - 4 * z, sy - 2 * z);
-      ctx.lineTo(sx + 4 * z, sy + 2 * z);
-      ctx.stroke();
     }
   }
 

@@ -611,8 +611,8 @@ export class GameApp {
         this.hover = this.screenToTile(x, y);
       },
     });
-    this.sfx.resume();
     this.renderer.life.reset();
+    this.sfx.resume();
     this.syncBudgetForm();
     this.refreshRewardTools();
     this.updateHud();
@@ -729,6 +729,7 @@ export class GameApp {
       time: this.visualTime,
       dt,
       timeOfDay: this.timeOfDay,
+      year: this.sim.year,
       ghost,
       monster: m ? { px: m.px, py: m.py } : null,
     });
